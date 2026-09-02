@@ -21,6 +21,14 @@ export const PAGE = `<!doctype html>
   .step .node { font-weight: 700; color: #0b6; }
   pre { margin: 6px 0 0; font: 12px ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
   #graph svg { max-width: 100%; }
+  .ch { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+  .ch th { text-align: left; color: #999; font-weight: 600; border-bottom: 1px solid #eee; padding: 2px 6px; }
+  .ch td { padding: 2px 6px; border-bottom: 1px solid #f3f3f3; }
+  .ch .k { font-weight: 600; }
+  .ch .t { color: #85f; font-family: ui-monospace, monospace; }
+  .ch .v { font-family: ui-monospace, monospace; color: #333; }
+  .ok { color: #0b6; }
+  .empty { color: #bbb; }
 </style>
 </head>
 <body>
@@ -66,8 +74,17 @@ export const PAGE = `<!doctype html>
     var res = await (await fetch("/api/run", { method: "POST", body: JSON.stringify(input) })).json();
     if (res.error) { box.innerHTML = "<p style='color:#c00'>" + res.error + "</p>"; return; }
     box.innerHTML = res.steps.map(function (s, i) {
-      return "<div class='step'><span class='node'>" + (i + 1) + ". " + s.node +
-        "</span><pre>" + JSON.stringify(s.state, null, 2) + "</pre></div>";
+      var rows = s.channels.map(function (c) {
+        var badge = c.available
+          ? "<span class='ok'>● available</span>"
+          : "<span class='empty'>○ empty</span>";
+        var val = c.available ? JSON.stringify(c.value) : "—";
+        return "<tr><td class='k'>" + c.key + "</td><td class='t'>[" + c.type +
+          "]</td><td>" + badge + "</td><td class='v'>" + val + "</td></tr>";
+      }).join("");
+      return "<div class='step'><div class='node'>" + (i + 1) + ". " + s.node + "</div>" +
+        "<table class='ch'><tr><th>channel</th><th>type</th><th>state</th><th>value</th></tr>" +
+        rows + "</table></div>";
     }).join("");
   }
 

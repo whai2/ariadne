@@ -12,6 +12,8 @@ export const MISSING: unique symbol = Symbol("MISSING");
  * langgraph 대응: channels/base.py 의 BaseChannel.
  */
 export interface BaseChannel<Value = unknown, Update = Value> {
+  /** 채널 종류의 표시 이름(Studio 등 관찰용). 예: "LastValue". */
+  readonly kind: string;
   /** 현재 값. 비어있으면 EmptyChannelError를 던진다. */
   get(): Value;
   /** 이번 스텝의 업데이트들을 반영한다. 값이 바뀌면 true. */

@@ -8,6 +8,7 @@ import { type BaseChannel, MISSING } from "./base";
  * langgraph 대응: channels/last_value.py 의 LastValue.
  */
 export class LastValue<T> implements BaseChannel<T, T> {
+  readonly kind = "LastValue";
   private value: T | typeof MISSING = MISSING;
 
   get(): T {

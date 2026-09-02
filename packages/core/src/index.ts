@@ -5,5 +5,5 @@ export { MISSING } from "./channels/base";
 export { LastValue } from "./channels/lastValue";
 export { END, START } from "./constants";
 export { EmptyChannelError, InvalidUpdateError } from "./errors";
-export type { GraphView, NodeFn, StepUpdate } from "./stateGraph";
+export type { ChannelSnapshot, GraphView, NodeFn, StepUpdate } from "./stateGraph";
 export { CompiledGraph, StateGraph } from "./stateGraph";

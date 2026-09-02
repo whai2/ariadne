@@ -25,6 +25,16 @@ function writeToChannels(channels: Map<string, BaseChannel>, partial: object): v
   }
 }
 
+/** 채널들의 관찰용 스냅샷(타입/가용성/값). Studio가 이걸로 채널 패널을 그린다. */
+function snapshotChannels(channels: Map<string, BaseChannel>): ChannelSnapshot[] {
+  return [...channels].map(([key, ch]) => {
+    const available = ch.isAvailable();
+    return available
+      ? { key, type: ch.kind, available, value: ch.get() }
+      : { key, type: ch.kind, available };
+  });
+}
+
 /**
  * 노드 함수: 현재 상태를 받아 "갱신할 부분 상태"를 반환한다.
  * 반환값은 기존 상태에 얕게(shallow) 병합된다. async 허용(우리는 async 한 벌).
@@ -37,10 +47,22 @@ export interface GraphView {
   edges: Array<{ from: string; to: string }>;
 }
 
-/** 한 스텝 실행 결과: 방금 실행된 노드와 그 직후의 전체 상태. langgraph 대응: stream(). */
+/** 한 채널의 관찰용 스냅샷(Studio가 채널 패널에 그린다). */
+export interface ChannelSnapshot {
+  key: string;
+  /** 채널 종류(예: "LastValue"). */
+  type: string;
+  /** 값이 있으면 true(비어있지 않음). */
+  available: boolean;
+  /** available일 때만 채워진다. */
+  value?: unknown;
+}
+
+/** 한 스텝 실행 결과: 방금 실행된 노드, 그 직후의 전체 상태, 채널별 스냅샷. langgraph 대응: stream(). */
 export interface StepUpdate<S> {
   node: string;
   state: S;
+  channels: ChannelSnapshot[];
 }
 
 /**
@@ -138,7 +160,11 @@ export class CompiledGraph<S extends object> {
       // 채널 → 상태 객체를 만들어 노드에 주고, 반환된 부분 상태를 채널에 쓴다.
       const update = await node(readChannels<S>(channels));
       writeToChannels(channels, update);
-      yield { node: current, state: readChannels<S>(channels) };
+      yield {
+        node: current,
+        state: readChannels<S>(channels),
+        channels: snapshotChannels(channels),
+      };
       current = this.edges.get(current);
       if (current === undefined) {
         throw new Error(`노드에 아웃엣지가 없다.`);

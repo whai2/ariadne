@@ -25,10 +25,20 @@ describe("Studio fetch 핸들러", () => {
       new Request("http://x/api/run", { method: "POST", body: JSON.stringify(input) }),
     );
     const { steps } = (await res.json()) as {
-      steps: Array<{ node: string; state: DemoState }>;
+      steps: Array<{
+        node: string;
+        state: DemoState;
+        channels: Array<{ key: string; type: string; available: boolean; value?: unknown }>;
+      }>;
     };
     expect(steps.map((s) => s.node)).toEqual(["greet", "shout"]);
     expect(steps.at(-1)?.state.steps).toBe(2);
+
+    // S2: 스텝마다 채널 스냅샷도 온다.
+    const last = steps.at(-1);
+    expect(last?.channels.map((c) => c.key)).toEqual(["text", "steps"]);
+    expect(last?.channels.every((c) => c.type === "LastValue" && c.available)).toBe(true);
+    expect(last?.channels.find((c) => c.key === "steps")?.value).toBe(2);
   });
 
   it("잘못된 JSON은 400", async () => {
