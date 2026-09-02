@@ -6,6 +6,18 @@ import { END, START } from "./constants";
  */
 export type NodeFn<S> = (state: S) => Partial<S> | Promise<Partial<S>>;
 
+/** 그래프의 구조(노드/엣지). Studio가 그림을 그릴 때 읽는다. langgraph 대응: get_graph(). */
+export interface GraphView {
+  nodes: string[];
+  edges: Array<{ from: string; to: string }>;
+}
+
+/** 한 스텝 실행 결과: 방금 실행된 노드와 그 직후의 전체 상태. langgraph 대응: stream(). */
+export interface StepUpdate<S> {
+  node: string;
+  state: S;
+}
+
 /**
  * 최소 StateGraph (V1 · walking skeleton).
  *
@@ -65,8 +77,20 @@ export class CompiledGraph<S extends object> {
     private readonly edges: Map<string, string>,
   ) {}
 
-  /** START부터 엣지를 따라 노드를 순차 실행하고 최종 상태를 반환한다. */
-  async invoke(input: S): Promise<S> {
+  /** 그래프 구조를 읽어 반환한다(그림용). Studio가 이걸로 노드/엣지를 그린다. */
+  getGraph(): GraphView {
+    return {
+      nodes: [...this.nodes.keys()],
+      edges: [...this.edges.entries()].map(([from, to]) => ({ from, to })),
+    };
+  }
+
+  /**
+   * START부터 엣지를 따라 노드를 순차 실행한다.
+   * 매 스텝마다 `{ node, state }`를 yield하고, 끝나면 최종 상태를 return한다.
+   * (Studio가 실행을 스텝별로 관찰할 수 있게 하는 관문. langgraph 대응: stream())
+   */
+  async *stream(input: S): AsyncGenerator<StepUpdate<S>, S> {
     let state: S = { ...input };
     let current = this.edges.get(START);
 
@@ -84,11 +108,22 @@ export class CompiledGraph<S extends object> {
       }
       const update = await node(state);
       state = { ...state, ...update };
+      yield { node: current, state };
       current = this.edges.get(current);
       if (current === undefined) {
         throw new Error(`노드에 아웃엣지가 없다.`);
       }
     }
     return state;
+  }
+
+  /** stream을 끝까지 소비하고 최종 상태만 반환한다. (invoke = stream의 마지막) */
+  async invoke(input: S): Promise<S> {
+    const gen = this.stream(input);
+    let r = await gen.next();
+    while (!r.done) {
+      r = await gen.next();
+    }
+    return r.value;
   }
 }
