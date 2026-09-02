@@ -1,0 +1,12 @@
+node_modules/
+coverage/
+dist/
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code 세션 로컬 설정(자동 생성 권한 등)
+.claude/
+
+# bun.lock 은 커밋한다 (의도적으로 무시하지 않음)

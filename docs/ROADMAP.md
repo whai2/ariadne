@@ -36,11 +36,11 @@
 각 커밋: **무엇을 / 참조 / 분석 포인트 / 검증**. 검증은 커밋마다 vitest 단위 테스트 동봉.
 
 ### Phase 0 — 스캐폴드
-- [ ] **C0 · 프로젝트 셋업**
-  - `package.json`(`type: module`), `tsconfig.json`(strict, ESNext/NodeNext), vitest, tsx. 런타임 의존성 0개(devDeps만).
-  - 폴더 골격: `src/{constants,errors,types,channels,pregel,graph}/`, `test/`, `docs/notes/`.
-  - README에 학습 목적·범위 명시.
-  - 검증: `pnpm test`(빈 스위트) + `tsc --noEmit` 통과.
+- [x] **C0 · 프로젝트 셋업 (풀 하네스, Bun 생태계)**
+  - **Bun**(런타임·패키지매니저·테스트러너) + **`tsc --noEmit`**(타입 게이트) + **Biome**(lint/format) + **lefthook**(pre-commit/pre-push) + **GitHub Actions CI**.
+  - `package.json`(`type: module`, 런타임 deps 0, devDeps 4개), strict `tsconfig.json`(ESNext/Bundler, `types:["bun"]`), `biome.json`, `.github/workflows/ci.yml`, `lefthook.yml`, `.gitignore`/`.editorconfig`/`.bun-version`, `README.md`.
+  - 폴더 골격: `src/{constants,errors,types,channels,pregel,graph}/`, `src/index.ts`(barrel), `test/smoke.test.ts`, `docs/notes/`.
+  - 검증: `bun run verify`(typecheck + biome check + bun test) 그린.
 
 ### Phase 1 — 기반 primitive (개념: 공용 어휘)
 - [ ] **C1 · 상수/센티넬** — `MISSING` 센티넬, `START`/`END`, `TASKS`, `PUSH`/`PULL`, 네임스페이스 구분자, 실제 쓸 `CONFIG_KEY_SEND`/`CONFIG_KEY_READ`만.
