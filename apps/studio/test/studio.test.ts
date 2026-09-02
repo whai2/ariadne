@@ -53,11 +53,33 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(steps[1]?.channels.length).toBe(3);
   });
 
-  it("accumulate 예제는 messages가 누적된다", async () => {
+  it("accumulate 예제는 messages가 누적된다(수동)", async () => {
     const { steps } = (await (
       await run("accumulate", { messages: [{ role: "user", content: "안녕?" }] })
     ).json()) as { steps: Array<{ state: { messages: unknown[] } }> };
     expect(steps.at(-1)?.state.messages.length).toBe(3);
+  });
+
+  it("reduce 예제는 리듀서로 자동 누적 + 채널 타입이 BinaryOperatorAggregate", async () => {
+    const { steps } = (await (
+      await run("reduce", { messages: [{ role: "user", content: "안녕?" }] })
+    ).json()) as {
+      steps: Array<{
+        state: { messages: unknown[] };
+        channels: Array<{ key: string; type: string }>;
+      }>;
+    };
+    expect(steps.at(-1)?.state.messages.length).toBe(3);
+    expect(steps.at(-1)?.channels.find((c) => c.key === "messages")?.type).toBe(
+      "BinaryOperatorAggregate",
+    );
+  });
+
+  it("counter 예제는 add 리듀서로 delta가 누적된다(0→3)", async () => {
+    const { steps } = (await (await run("counter", { n: 0 })).json()) as {
+      steps: Array<{ state: { n: number } }>;
+    };
+    expect(steps.at(-1)?.state.n).toBe(3);
   });
 
   it("잘못된 JSON은 400, 모르는 경로는 404", async () => {

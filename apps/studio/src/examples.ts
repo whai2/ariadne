@@ -1,4 +1,4 @@
-import { type CompiledGraph, END, START, StateGraph } from "@ariadne/core";
+import { type CompiledGraph, END, START, StateGraph, type StateSchema } from "@ariadne/core";
 
 /** 스튜디오가 고를 수 있는 예제 하나. 타입은 지우고(런타임 데모) 이름/설명/샘플입력을 곁들인다. */
 export interface Example {
@@ -13,8 +13,9 @@ export interface Example {
 function example<S extends object>(
   meta: { id: string; name: string; description: string; sampleInput: S },
   build: (g: StateGraph<S>) => void,
+  schema?: StateSchema<S>,
 ): Example {
-  const g = new StateGraph<S>();
+  const g = new StateGraph<S>(schema);
   build(g);
   return {
     id: meta.id,
@@ -79,6 +80,44 @@ export const examples: Example[] = [
       g.addEdge("assistant", "user");
       g.addEdge("user", END);
     },
+  ),
+
+  example<{ messages: Msg[] }>(
+    {
+      id: "reduce",
+      name: "리듀서 누적(메시지)",
+      description:
+        "messages에 concat 리듀서. 노드는 [새 메시지]만 반환 → 채널이 자동 append. 타입이 [BinaryOperatorAggregate]. (accumulate와 비교!)",
+      sampleInput: { messages: [{ role: "user", content: "안녕?" }] },
+    },
+    (g) => {
+      g.addNode("assistant", () => ({ messages: [{ role: "assistant", content: "반가워요!" }] }));
+      g.addNode("user", () => ({ messages: [{ role: "user", content: "고마워요" }] }));
+      g.addEdge(START, "assistant");
+      g.addEdge("assistant", "user");
+      g.addEdge("user", END);
+    },
+    { messages: { reducer: (a, b) => [...a, ...b] } },
+  ),
+
+  example<{ n: number }>(
+    {
+      id: "counter",
+      name: "리듀서 합계",
+      description:
+        "n에 add 리듀서. 각 노드가 +1(delta)만 반환 → 자동 누적(0→1→2→3). LastValue였다면 1로 덮였을 것.",
+      sampleInput: { n: 0 },
+    },
+    (g) => {
+      for (const name of ["a", "b", "c"]) {
+        g.addNode(name, () => ({ n: 1 }));
+      }
+      g.addEdge(START, "a");
+      g.addEdge("a", "b");
+      g.addEdge("b", "c");
+      g.addEdge("c", END);
+    },
+    { n: { reducer: (a, b) => a + b } },
   ),
 
   example<{ a: number; b: number; c: number }>(
