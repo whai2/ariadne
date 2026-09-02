@@ -15,6 +15,7 @@
     "format": "biome format --write .",
     "check": "biome check .",
     "verify": "bun run typecheck && bun run check && bun run test",
+    "studio": "bun run --filter '@ariadne/studio' dev",
     "prepare": "lefthook install"
   },
   "devDependencies": {

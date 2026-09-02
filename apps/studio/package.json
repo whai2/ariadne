@@ -1,0 +1,15 @@
+{
+  "name": "@ariadne/studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ariadne Studio — 그래프 시각화 + invoke 스텝 실행 (최소)",
+  "scripts": {
+    "dev": "bun run src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ariadne/core": "workspace:*"
+  }
+}

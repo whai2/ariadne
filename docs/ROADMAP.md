@@ -101,6 +101,16 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 
 ---
 
+## Studio 트랙 (조기·최소, core와 병렬)
+
+Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@ariadne/studio`). 각 단계는 core에 필요한 관찰 API를 요구하며 자란다.
+
+- [x] **S1 · 최소 스튜디오** — Bun.serve 로컬 서버(:4111) + 브라우저 UI. 그래프를 mermaid로 시각화 + invoke를 스텝별 실행/관찰.
+  - **core를 진화시킴:** `getGraph()`(구조) + `stream()`(스텝 이벤트) 추가. `invoke = stream의 마지막`.
+- [ ] **S2 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
+- [ ] **S3 · 사용자 그래프 로드** — 하드코딩 샘플 → 실제 그래프 파일 로드.
+- 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.
+
 ## 진행 방식
 - **V0 → V1 → …** 순서로 한 단계씩. 각 단계에서 구현 + `bun:test` + `docs/notes/NN-*.md` 분석 노트까지 완주하고 커밋 후 멈춘다.
 - 커밋 전 `bun run verify`(typecheck + biome + test) 그린.

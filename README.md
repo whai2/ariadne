@@ -8,9 +8,16 @@ TypeScript **올인원 에이전트 프레임워크**(Mastra 스타일)를 바�
 
 ## 모노레포 (Bun workspaces)
 ```
-packages/core   @ariadne/core   ← 그래프 엔진 (지금 여기, 런타임 deps 0)
+packages/core   @ariadne/core   ← 그래프 엔진 (런타임 deps 0)
 packages/*      model·tools·agent·memory (예정)
-apps/studio     비주얼 개발 UI (예정, 조기·최소)
+apps/studio     @ariadne/studio ← 비주얼 개발 UI (그래프 시각화 + 스텝 실행)
+```
+
+## 실행
+```bash
+bun install       # 워크스페이스 설치 + git hooks
+bun run verify    # typecheck + biome + test (전 패키지)
+bun run studio    # Studio 서버 → http://localhost:4111
 ```
 
 ## 방향
