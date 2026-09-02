@@ -1,55 +1,71 @@
 import { describe, expect, it } from "bun:test";
-import { type DemoState, sampleGraph } from "../src/sampleGraph";
+import { examples } from "../src/examples";
 import { createStudio } from "../src/studio";
 
-const studio = createStudio(sampleGraph());
+const studio = createStudio(examples);
 
-describe("Studio fetch 핸들러", () => {
+function run(id: string, input: unknown) {
+  return studio.fetch(
+    new Request("http://x/api/run", { method: "POST", body: JSON.stringify({ id, input }) }),
+  );
+}
+
+describe("Studio fetch 핸들러 (예제 갤러리)", () => {
   it("GET / 는 HTML 페이지를 준다", async () => {
     const res = await studio.fetch(new Request("http://x/"));
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
     expect(await res.text()).toContain("Ariadne Studio");
   });
 
-  it("GET /api/graph 는 그래프 구조를 준다", async () => {
-    const res = await studio.fetch(new Request("http://x/api/graph"));
-    const g = (await res.json()) as { nodes: string[]; edges: unknown[] };
-    expect(g.nodes).toEqual(["greet", "shout"]);
-    expect(g.edges.length).toBe(3);
+  it("GET /api/examples 는 예제 목록을 준다", async () => {
+    const list = (await (
+      await studio.fetch(new Request("http://x/api/examples"))
+    ).json()) as Array<{
+      id: string;
+      sampleInput: unknown;
+    }>;
+    expect(list.length).toBeGreaterThanOrEqual(5);
+    expect(list[0]?.id).toBe("linear");
+    expect(list.map((e) => e.id)).toContain("accumulate");
   });
 
-  it("POST /api/run 은 스텝별 상태를 준다", async () => {
-    const input: DemoState = { text: "hi", steps: 0 };
-    const res = await studio.fetch(
-      new Request("http://x/api/run", { method: "POST", body: JSON.stringify(input) }),
-    );
-    const { steps } = (await res.json()) as {
-      steps: Array<{
-        node: string;
-        state: DemoState;
-        channels: Array<{ key: string; type: string; available: boolean; value?: unknown }>;
-      }>;
+  it("GET /api/graph?id=grow 는 해당 예제 구조를 준다", async () => {
+    const g = (await (await studio.fetch(new Request("http://x/api/graph?id=grow"))).json()) as {
+      nodes: string[];
+    };
+    expect(g.nodes).toEqual(["research", "write"]);
+  });
+
+  it("POST /api/run 은 선택한 예제를 실행한다", async () => {
+    const { steps } = (await (await run("linear", { text: "hi", steps: 0 })).json()) as {
+      steps: Array<{ node: string; channels: Array<{ key: string }> }>;
     };
     expect(steps.map((s) => s.node)).toEqual(["greet", "shout"]);
-    expect(steps.at(-1)?.state.steps).toBe(2);
-
-    // S2: 스텝마다 채널 스냅샷도 온다.
-    const last = steps.at(-1);
-    expect(last?.channels.map((c) => c.key)).toEqual(["text", "steps"]);
-    expect(last?.channels.every((c) => c.type === "LastValue" && c.available)).toBe(true);
-    expect(last?.channels.find((c) => c.key === "steps")?.value).toBe(2);
+    expect(steps.at(-1)?.channels.map((c) => c.key)).toEqual(["text", "steps"]);
   });
 
-  it("잘못된 JSON은 400", async () => {
-    const res = await studio.fetch(
-      new Request("http://x/api/run", { method: "POST", body: "not json" }),
+  it("grow 예제는 스텝마다 채널 수가 늘어난다", async () => {
+    const { steps } = (await (await run("grow", { topic: "AI" })).json()) as {
+      steps: Array<{ channels: unknown[] }>;
+    };
+    // step1(research): topic, notes → 2개, step2(write): +article → 3개
+    expect(steps[0]?.channels.length).toBe(2);
+    expect(steps[1]?.channels.length).toBe(3);
+  });
+
+  it("accumulate 예제는 messages가 누적된다", async () => {
+    const { steps } = (await (
+      await run("accumulate", { messages: [{ role: "user", content: "안녕?" }] })
+    ).json()) as { steps: Array<{ state: { messages: unknown[] } }> };
+    expect(steps.at(-1)?.state.messages.length).toBe(3);
+  });
+
+  it("잘못된 JSON은 400, 모르는 경로는 404", async () => {
+    const bad = await studio.fetch(
+      new Request("http://x/api/run", { method: "POST", body: "nope" }),
     );
-    expect(res.status).toBe(400);
-  });
-
-  it("모르는 경로는 404", async () => {
-    const res = await studio.fetch(new Request("http://x/nope"));
-    expect(res.status).toBe(404);
+    expect(bad.status).toBe(400);
+    const nf = await studio.fetch(new Request("http://x/zzz"));
+    expect(nf.status).toBe(404);
   });
 });

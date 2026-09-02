@@ -36,6 +36,8 @@ export const PAGE = `<!doctype html>
 <main>
   <section>
     <h2>Graph</h2>
+    <select id="example"></select>
+    <p id="desc" style="color:#888;margin:8px 0 4px"></p>
     <div id="graph">불러오는 중…</div>
   </section>
   <section>
@@ -49,6 +51,10 @@ export const PAGE = `<!doctype html>
 <script>
   mermaid.initialize({ startOnLoad: false });
 
+  var EXAMPLES = [];
+  var currentId = null;
+  var renderSeq = 0;
+
   function labelOf(n) { return n === "__start__" ? "START" : n === "__end__" ? "END" : n; }
 
   function toMermaid(graph) {
@@ -59,11 +65,29 @@ export const PAGE = `<!doctype html>
     return lines.join("\\n");
   }
 
-  async function drawGraph() {
-    var graph = await (await fetch("/api/graph")).json();
-    var def = toMermaid(graph);
-    var out = await mermaid.render("g", def);
+  async function drawGraph(id) {
+    var graph = await (await fetch("/api/graph?id=" + encodeURIComponent(id))).json();
+    var out = await mermaid.render("g" + (++renderSeq), toMermaid(graph));
     document.getElementById("graph").innerHTML = out.svg;
+  }
+
+  async function selectExample(id) {
+    currentId = id;
+    var ex = EXAMPLES.find(function (e) { return e.id === id; });
+    document.getElementById("desc").textContent = ex ? ex.description : "";
+    document.getElementById("input").value = ex ? JSON.stringify(ex.sampleInput, null, 2) : "{}";
+    document.getElementById("steps").innerHTML = "";
+    await drawGraph(id);
+  }
+
+  async function loadExamples() {
+    EXAMPLES = await (await fetch("/api/examples")).json();
+    var sel = document.getElementById("example");
+    sel.innerHTML = EXAMPLES.map(function (e) {
+      return "<option value='" + e.id + "'>" + e.name + "</option>";
+    }).join("");
+    sel.addEventListener("change", function () { selectExample(sel.value); });
+    if (EXAMPLES.length) selectExample(EXAMPLES[0].id);
   }
 
   async function run() {
@@ -71,7 +95,9 @@ export const PAGE = `<!doctype html>
     var input;
     try { input = JSON.parse(document.getElementById("input").value); }
     catch (e) { box.innerHTML = "<p style='color:#c00'>입력 JSON 오류</p>"; return; }
-    var res = await (await fetch("/api/run", { method: "POST", body: JSON.stringify(input) })).json();
+    var res = await (await fetch("/api/run", {
+      method: "POST", body: JSON.stringify({ id: currentId, input: input }),
+    })).json();
     if (res.error) { box.innerHTML = "<p style='color:#c00'>" + res.error + "</p>"; return; }
     box.innerHTML = res.steps.map(function (s, i) {
       var rows = s.channels.map(function (c) {
@@ -89,7 +115,7 @@ export const PAGE = `<!doctype html>
   }
 
   document.getElementById("run").addEventListener("click", run);
-  drawGraph();
+  loadExamples();
 </script>
 </body>
 </html>`;
