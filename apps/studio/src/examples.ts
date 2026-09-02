@@ -45,6 +45,29 @@ export const examples: Example[] = [
     },
   ),
 
+  example<{ log: string[] }>(
+    {
+      id: "diamond",
+      name: "다이아몬드(분기·병렬·팬인)",
+      description:
+        "START→a→{b,c}→d→END. b,c가 한 superstep에 병렬 실행 → 'Step 1: b · c'. log가 concat 리듀서라 두 병렬 쓰기가 합쳐진다. 처음 보는 비선형 그래프!",
+      sampleInput: { log: [] },
+    },
+    (g) => {
+      g.addNode("a", () => ({ log: ["a"] }));
+      g.addNode("b", () => ({ log: ["b"] }));
+      g.addNode("c", () => ({ log: ["c"] }));
+      g.addNode("d", () => ({ log: ["d"] }));
+      g.addEdge(START, "a");
+      g.addEdge("a", "b");
+      g.addEdge("a", "c"); // 분기
+      g.addEdge("b", "d");
+      g.addEdge("c", "d"); // 팬인
+      g.addEdge("d", END);
+    },
+    { log: { reducer: (a, b) => [...a, ...b] } },
+  ),
+
   example<{ topic: string; notes?: string; article?: string }>(
     {
       id: "grow",

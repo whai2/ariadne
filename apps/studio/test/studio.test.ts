@@ -44,6 +44,14 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(steps.at(-1)?.channels.map((c) => c.key)).toEqual(["text", "steps"]);
   });
 
+  it("diamond 예제는 b·c가 한 superstep에 병렬 실행되고 리듀서로 합쳐진다", async () => {
+    const { steps } = (await (await run("diamond", { log: [] })).json()) as {
+      steps: Array<{ nodes: string[]; state: { log: string[] } }>;
+    };
+    expect(steps.map((s) => s.nodes)).toEqual([["a"], ["b", "c"], ["d"]]);
+    expect(steps.at(-1)?.state.log).toEqual(["a", "b", "c", "d"]);
+  });
+
   it("grow 예제는 스텝마다 채널 수가 늘어난다", async () => {
     const { steps } = (await (await run("grow", { topic: "AI" })).json()) as {
       steps: Array<{ channels: unknown[] }>;
