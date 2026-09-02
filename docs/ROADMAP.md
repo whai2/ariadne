@@ -53,7 +53,7 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - **검증:** 빈 채널 get→에러, update→get 왕복.
 - **벽 → 다음:** 두 노드가 같은 키를 쓰면 LastValue가 거부 → **누적**이 필요.
 
-### V3 · 리듀서 채널
+### V3 · 리듀서 채널 — [x] 완료
 - **도는 것:** 상태 키를 `{ reducer }`로 선언하면 값이 **누적**(예: 리스트 concat, 카운터 +).
 - **내부:** 리듀서 있으면 `BinaryOperatorAggregate`, 없으면 `LastValue`로 채널 파생.
 - **참조:** `channels/binop.py`, `graph/state.py`의 `_get_channels`.

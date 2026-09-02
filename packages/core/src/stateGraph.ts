@@ -1,6 +1,23 @@
 import type { BaseChannel } from "./channels/base";
+import { BinaryOperatorAggregate } from "./channels/binop";
 import { LastValue } from "./channels/lastValue";
 import { END, START } from "./constants";
+
+/** 상태 키의 병합 정책. reducer가 있으면 누적 채널, 없으면 LastValue. langgraph의 Annotated 대응. */
+export interface ChannelSpec<T> {
+  reducer?: (current: T, update: T) => T;
+}
+
+/** 상태 스키마: 키별 채널 정책. 선언 안 한 키는 LastValue로 동적 생성. */
+export type StateSchema<S> = { [K in keyof S]?: ChannelSpec<S[K]> };
+
+/** 스펙 하나를 채널로 만든다. reducer가 있으면 BinaryOperatorAggregate, 없으면 LastValue. */
+function makeChannel(spec: ChannelSpec<unknown> | undefined): BaseChannel {
+  if (spec?.reducer) {
+    return new BinaryOperatorAggregate(spec.reducer);
+  }
+  return new LastValue();
+}
 
 /** 채널들에서 값을 모아 평범한 상태 객체로 만든다. 비어있는 채널은 뺀다. */
 function readChannels<S>(channels: Map<string, BaseChannel>): S {
@@ -80,6 +97,9 @@ export class StateGraph<S extends object> {
   /** 아웃엣지: from -> to (V1은 노드당 1개) */
   private readonly edges = new Map<string, string>();
 
+  /** @param schema 키별 채널 정책(리듀서 등). 생략 시 모든 키가 LastValue. */
+  constructor(private readonly schema: StateSchema<S> = {}) {}
+
   addNode(name: string, fn: NodeFn<S>): this {
     if (name === START || name === END) {
       throw new Error(`'${name}'는 예약된 이름이라 노드로 쓸 수 없다.`);
@@ -113,7 +133,7 @@ export class StateGraph<S extends object> {
     if (!this.edges.has(START)) {
       throw new Error("진입 엣지가 없다: addEdge(START, ...)가 필요하다.");
     }
-    return new CompiledGraph(new Map(this.nodes), new Map(this.edges));
+    return new CompiledGraph(new Map(this.nodes), new Map(this.edges), this.schema);
   }
 }
 
@@ -122,6 +142,7 @@ export class CompiledGraph<S extends object> {
   constructor(
     private readonly nodes: Map<string, NodeFn<S>>,
     private readonly edges: Map<string, string>,
+    private readonly schema: StateSchema<S> = {},
   ) {}
 
   /** 그래프 구조를 읽어 반환한다(그림용). Studio가 이걸로 노드/엣지를 그린다. */
@@ -138,9 +159,12 @@ export class CompiledGraph<S extends object> {
    * (Studio가 실행을 스텝별로 관찰할 수 있게 하는 관문. langgraph 대응: stream())
    */
   async *stream(input: S): AsyncGenerator<StepUpdate<S>, S> {
-    // V2: 상태를 채널에 담는다. 각 상태 키 = LastValue 채널.
-    // (아직 스키마는 없다 — 채널은 입력/쓰기에서 본 키로 동적 생성. V3에서 스키마화.)
+    // V3: 스키마에 선언된 키는 정책대로 채널을 만든다(리듀서면 누적 채널).
+    // 선언 안 한 키는 writeToChannels가 LastValue로 동적 생성.
     const channels = new Map<string, BaseChannel>();
+    for (const [key, spec] of Object.entries(this.schema)) {
+      channels.set(key, makeChannel(spec as ChannelSpec<unknown> | undefined));
+    }
     writeToChannels(channels, input);
 
     let current = this.edges.get(START);
