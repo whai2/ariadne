@@ -1,4 +1,29 @@
+import type { BaseChannel } from "./channels/base";
+import { LastValue } from "./channels/lastValue";
 import { END, START } from "./constants";
+
+/** 채널들에서 값을 모아 평범한 상태 객체로 만든다. 비어있는 채널은 뺀다. */
+function readChannels<S>(channels: Map<string, BaseChannel>): S {
+  const out: Record<string, unknown> = {};
+  for (const [key, ch] of channels) {
+    if (ch.isAvailable()) {
+      out[key] = ch.get();
+    }
+  }
+  return out as S;
+}
+
+/** 부분 상태의 각 키를 해당 채널에 쓴다(없으면 LastValue를 만든다). */
+function writeToChannels(channels: Map<string, BaseChannel>, partial: object): void {
+  for (const [key, value] of Object.entries(partial)) {
+    let ch = channels.get(key);
+    if (ch === undefined) {
+      ch = new LastValue();
+      channels.set(key, ch);
+    }
+    ch.update([value]);
+  }
+}
 
 /**
  * 노드 함수: 현재 상태를 받아 "갱신할 부분 상태"를 반환한다.
@@ -91,7 +116,11 @@ export class CompiledGraph<S extends object> {
    * (Studio가 실행을 스텝별로 관찰할 수 있게 하는 관문. langgraph 대응: stream())
    */
   async *stream(input: S): AsyncGenerator<StepUpdate<S>, S> {
-    let state: S = { ...input };
+    // V2: 상태를 채널에 담는다. 각 상태 키 = LastValue 채널.
+    // (아직 스키마는 없다 — 채널은 입력/쓰기에서 본 키로 동적 생성. V3에서 스키마화.)
+    const channels = new Map<string, BaseChannel>();
+    writeToChannels(channels, input);
+
     let current = this.edges.get(START);
 
     // 무한 루프 방지(재귀 한도). V4에서 제대로 다룬다.
@@ -106,15 +135,16 @@ export class CompiledGraph<S extends object> {
       if (node === undefined) {
         throw new Error(`노드 '${current}'가 없다.`);
       }
-      const update = await node(state);
-      state = { ...state, ...update };
-      yield { node: current, state };
+      // 채널 → 상태 객체를 만들어 노드에 주고, 반환된 부분 상태를 채널에 쓴다.
+      const update = await node(readChannels<S>(channels));
+      writeToChannels(channels, update);
+      yield { node: current, state: readChannels<S>(channels) };
       current = this.edges.get(current);
       if (current === undefined) {
         throw new Error(`노드에 아웃엣지가 없다.`);
       }
     }
-    return state;
+    return readChannels<S>(channels);
   }
 
   /** stream을 끝까지 소비하고 최종 상태만 반환한다. (invoke = stream의 마지막) */

@@ -45,7 +45,7 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - **검증:** 선형 그래프가 상태를 변환.
 - **벽 → 다음:** 상태가 그냥 겹쳐쓰기라 "키별 통일된 저장 규칙"·"같은 키 다중 쓰기"가 애매.
 
-### V2 · 채널로 상태 저장
+### V2 · 채널로 상태 저장 — [x] 완료
 - **도는 것:** 동일 선형 그래프가 이제 **채널 기반**으로 동일 출력.
 - **내부:** 상태 객체 → `channels: Record<string, LastValue>`. 읽기=각 채널 `get()`, 쓰기=부분상태의 각 키를 `channel.update([v])`.
 - **새 개념·상수:** **`MISSING` 센티넬** + `EmptyChannelError`(채널의 "아직 안 써짐"). `LastValue`(step당 1회 쓰기, 2회면 `InvalidUpdateError`).
