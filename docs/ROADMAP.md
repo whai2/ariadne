@@ -60,16 +60,16 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - **검증:** `items: concat`, `count: add` 누적.
 - **벽 → 다음:** 동시에 여러 노드가 돌면 그 업데이트들을 한 번에 접어야 하는데, 지금은 순차라 병렬/팬인이 불가.
 
-### V4 · superstep (BSP) ← 가장 큰 전환
-- **도는 것:** 다이아몬드 `START→a→{b,c}→d→END` (b,c 병렬, d 팬인) 실행.
+### V4 · superstep (BSP) — [x] 완료 ← 가장 큰 전환
+- **도는 것:** 다이아몬드 `START→a→{b,c}→d→END` (b,c 병렬, d 팬인) 실행. 아웃엣지 여러 개(분기) 허용.
 - **내부:** 순차 edge-following → **Plan/Execute/Update** 슈퍼스텝으로 리팩터.
-  - 트리거 채널(`EphemeralValue`): 엣지 = 소스 완료 시 타깃의 트리거 채널에 씀. 노드는 트리거 채널을 구독.
-  - **Plan**(`prepareNextTasks` 최소): 직전 step에 갱신된 채널을 구독하는 노드 = 다음 태스크.
-  - **Execute**: 태스크 동시 실행, 쓰기는 버퍼.
-  - **Update**(`applyWrites`): 버퍼를 채널별로 그룹핑해 update, 갱신 채널 집합 반환 → 다음 Plan.
-- **새 개념:** BSP 루프, 트리거 채널, 팬인용 `NamedBarrierValue`. (필요시 V4a: tick 루프 / V4b: 팬인 배리어로 분할)
-- **참조:** `pregel/_algo.py`(apply_writes, prepare_next_tasks), `pregel/_loop.py`(tick/after_tick), `channels/{ephemeral_value,named_barrier_value}.py`.
-- **검증:** 병렬·팬인 그래프, 재귀 한도 종료.
+  - **Plan**: 활성 노드 집합(START 대상 → 직전 실행 노드들의 아웃엣지 대상, 중복 제거).
+  - **Execute**: 같은 스냅샷을 읽고 병렬 실행(`Promise.all`), 쓰기는 버퍼.
+  - **Update**(`applyWrites` + `collectWrites`): 채널키별로 모아 한 번에 반영, 같은 채널 여러 쓰기는 리듀서가 fold.
+  - `StepUpdate`: `{node}` → `{step, nodes[]}`.
+- **V3가 전제였던 이유 증명:** 병렬 쓰기 + 리듀서 → 합침 / + LastValue → `InvalidUpdateError`.
+- **V7로 미룸(정직):** 스케줄링을 트리거 채널(`EphemeralValue`)로 구현하는 것, 스태거드 팬인 join(`NamedBarrierValue`)은 langgraph 정합 단계(V7)에서. 지금은 활성 집합을 아웃엣지로 직접 계산.
+- **참조:** `pregel/_algo.py`(apply_writes), `pregel/_loop.py`.
 - **벽 → 다음:** 고정 엣지만으론 런타임 조건 분기 불가.
 
 ### V5 · 조건부 엣지

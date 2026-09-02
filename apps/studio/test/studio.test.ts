@@ -36,11 +36,11 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(g.nodes).toEqual(["research", "write"]);
   });
 
-  it("POST /api/run 은 선택한 예제를 실행한다", async () => {
+  it("POST /api/run 은 선택한 예제를 superstep별로 실행한다", async () => {
     const { steps } = (await (await run("linear", { text: "hi", steps: 0 })).json()) as {
-      steps: Array<{ node: string; channels: Array<{ key: string }> }>;
+      steps: Array<{ step: number; nodes: string[]; channels: Array<{ key: string }> }>;
     };
-    expect(steps.map((s) => s.node)).toEqual(["greet", "shout"]);
+    expect(steps.map((s) => s.nodes)).toEqual([["greet"], ["shout"]]);
     expect(steps.at(-1)?.channels.map((c) => c.key)).toEqual(["text", "steps"]);
   });
 

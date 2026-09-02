@@ -30,16 +30,38 @@ function readChannels<S>(channels: Map<string, BaseChannel>): S {
   return out as S;
 }
 
-/** 부분 상태의 각 키를 해당 채널에 쓴다(없으면 LastValue를 만든다). */
-function writeToChannels(channels: Map<string, BaseChannel>, partial: object): void {
-  for (const [key, value] of Object.entries(partial)) {
+/**
+ * 한 superstep에 모인 쓰기를 채널에 반영한다(Update 단계).
+ * writes: 채널키 -> 그 스텝에 그 채널로 온 모든 값. 채널이 여러 값을 fold(리듀서)하거나,
+ * LastValue면 2개 이상일 때 InvalidUpdateError(→ 병렬엔 리듀서가 필요). 갱신된 채널 키를 반환.
+ * langgraph 대응: pregel/_algo.py 의 apply_writes.
+ */
+function applyWrites(channels: Map<string, BaseChannel>, writes: Map<string, unknown[]>): string[] {
+  const updated: string[] = [];
+  for (const [key, values] of writes) {
     let ch = channels.get(key);
     if (ch === undefined) {
       ch = new LastValue();
       channels.set(key, ch);
     }
-    ch.update([value]);
+    if (ch.update(values)) {
+      updated.push(key);
+    }
   }
+  return updated;
+}
+
+/** 여러 노드가 이 스텝에 반환한 부분 상태들을 채널키별 값 목록으로 모은다. */
+function collectWrites(updates: object[]): Map<string, unknown[]> {
+  const writes = new Map<string, unknown[]>();
+  for (const update of updates) {
+    for (const [key, value] of Object.entries(update)) {
+      const arr = writes.get(key) ?? [];
+      arr.push(value);
+      writes.set(key, arr);
+    }
+  }
+  return writes;
 }
 
 /** 채널들의 관찰용 스냅샷(타입/가용성/값). Studio가 이걸로 채널 패널을 그린다. */
@@ -54,7 +76,7 @@ function snapshotChannels(channels: Map<string, BaseChannel>): ChannelSnapshot[]
 
 /**
  * 노드 함수: 현재 상태를 받아 "갱신할 부분 상태"를 반환한다.
- * 반환값은 기존 상태에 얕게(shallow) 병합된다. async 허용(우리는 async 한 벌).
+ * 반환값은 채널에 반영된다(리듀서면 누적, 아니면 덮어쓰기). async 허용.
  */
 export type NodeFn<S> = (state: S) => Partial<S> | Promise<Partial<S>>;
 
@@ -67,7 +89,7 @@ export interface GraphView {
 /** 한 채널의 관찰용 스냅샷(Studio가 채널 패널에 그린다). */
 export interface ChannelSnapshot {
   key: string;
-  /** 채널 종류(예: "LastValue"). */
+  /** 채널 종류(예: "LastValue", "BinaryOperatorAggregate"). */
   type: string;
   /** 값이 있으면 true(비어있지 않음). */
   available: boolean;
@@ -75,27 +97,30 @@ export interface ChannelSnapshot {
   value?: unknown;
 }
 
-/** 한 스텝 실행 결과: 방금 실행된 노드, 그 직후의 전체 상태, 채널별 스냅샷. langgraph 대응: stream(). */
+/** 한 superstep 실행 결과: 그 스텝에 (병렬로) 실행된 노드들 + 직후 상태/채널. langgraph 대응: stream(). */
 export interface StepUpdate<S> {
-  node: string;
+  /** superstep 번호(0부터). */
+  step: number;
+  /** 이 superstep에 병렬 실행된 노드들. */
+  nodes: string[];
   state: S;
   channels: ChannelSnapshot[];
 }
 
 /**
- * 최소 StateGraph (V1 · walking skeleton).
+ * StateGraph (V4 · superstep / BSP).
  *
- * - 상태 = 평범한 객체. 노드가 돌려준 부분 상태를 `{...state, ...update}`로 병합.
- * - 선형 그래프만: 각 노드는 아웃엣지 1개. START에서 시작해 엣지를 따라가다 END에서 멈춘다.
- * - 채널/리듀서/superstep 없음 — 이후 단계에서 이 내부를 점점 langgraph 구조로 바꾼다.
+ * - 노드는 아웃엣지를 **여러 개** 가질 수 있다(분기/팬아웃).
+ * - 실행 = Plan→Execute→Update **superstep**: 활성 노드들을 병렬 실행하고, 쓰기는 버퍼했다
+ *   스텝 경계에서 한 번에 반영. 같은 채널로 온 여러 쓰기는 리듀서가 fold한다.
  *
- * langgraph 대응: graph/state.py 의 StateGraph 표면(add_node/add_edge/compile).
+ * langgraph 대응: graph/state.py(StateGraph) + pregel 루프.
  */
 export class StateGraph<S extends object> {
   /** 노드 이름 -> 실행 함수 */
   private readonly nodes = new Map<string, NodeFn<S>>();
-  /** 아웃엣지: from -> to (V1은 노드당 1개) */
-  private readonly edges = new Map<string, string>();
+  /** 아웃엣지: from -> [targets] (V4부터 여러 개 가능) */
+  private readonly edges = new Map<string, string[]>();
 
   /** @param schema 키별 채널 정책(리듀서 등). 생략 시 모든 키가 LastValue. */
   constructor(private readonly schema: StateSchema<S> = {}) {}
@@ -121,14 +146,15 @@ export class StateGraph<S extends object> {
     if (to !== END && !this.nodes.has(to)) {
       throw new Error(`엣지 도착 노드 '${to}'가 없다.`);
     }
-    if (this.edges.has(from)) {
-      throw new Error(`'${from}'의 아웃엣지가 이미 있다 (V1은 선형만 지원).`);
+    const outs = this.edges.get(from) ?? [];
+    if (!outs.includes(to)) {
+      outs.push(to);
     }
-    this.edges.set(from, to);
+    this.edges.set(from, outs);
     return this;
   }
 
-  /** 검증 후 실행 가능한 스냅샷을 넘긴다. V1의 compile은 거의 no-op. */
+  /** 검증 후 실행 가능한 스냅샷을 넘긴다. */
   compile(): CompiledGraph<S> {
     if (!this.edges.has(START)) {
       throw new Error("진입 엣지가 없다: addEdge(START, ...)가 필요하다.");
@@ -141,7 +167,7 @@ export class StateGraph<S extends object> {
 export class CompiledGraph<S extends object> {
   constructor(
     private readonly nodes: Map<string, NodeFn<S>>,
-    private readonly edges: Map<string, string>,
+    private readonly edges: Map<string, string[]>,
     private readonly schema: StateSchema<S> = {},
   ) {}
 
@@ -149,51 +175,80 @@ export class CompiledGraph<S extends object> {
   getGraph(): GraphView {
     return {
       nodes: [...this.nodes.keys()],
-      edges: [...this.edges.entries()].map(([from, to]) => ({ from, to })),
+      edges: [...this.edges.entries()].flatMap(([from, tos]) => tos.map((to) => ({ from, to }))),
     };
   }
 
   /**
-   * START부터 엣지를 따라 노드를 순차 실행한다.
-   * 매 스텝마다 `{ node, state }`를 yield하고, 끝나면 최종 상태를 return한다.
-   * (Studio가 실행을 스텝별로 관찰할 수 있게 하는 관문. langgraph 대응: stream())
+   * superstep(BSP)으로 실행한다. 매 superstep마다 `{ step, nodes, state, channels }`를 yield하고,
+   * 끝나면 최종 상태를 return한다.
+   *
+   * 한 스텝: Plan(활성 노드 결정) → Execute(같은 스냅샷을 읽고 병렬 실행, 쓰기 버퍼)
+   *        → Update(applyWrites로 한 번에 반영, 리듀서가 병렬 쓰기 fold).
+   * langgraph 대응: stream() + pregel 루프.
    */
   async *stream(input: S): AsyncGenerator<StepUpdate<S>, S> {
-    // V3: 스키마에 선언된 키는 정책대로 채널을 만든다(리듀서면 누적 채널).
-    // 선언 안 한 키는 writeToChannels가 LastValue로 동적 생성.
+    // 채널 초기화: 스키마 선언 키는 정책대로, 나머지는 applyWrites가 LastValue로.
     const channels = new Map<string, BaseChannel>();
     for (const [key, spec] of Object.entries(this.schema)) {
       channels.set(key, makeChannel(spec as ChannelSpec<unknown> | undefined));
     }
-    writeToChannels(channels, input);
+    // 입력 반영(각 키 값 1개).
+    applyWrites(
+      channels,
+      new Map<string, unknown[]>(
+        Object.entries(input).map(([k, v]) => [k, [v]] as [string, unknown[]]),
+      ),
+    );
 
-    let current = this.edges.get(START);
+    // Plan: 첫 활성 노드 = START의 아웃엣지 대상들.
+    let active = new Set(this.edges.get(START) ?? []);
 
-    // 무한 루프 방지(재귀 한도). V4에서 제대로 다룬다.
     const limit = 100;
-    let steps = 0;
+    let step = 0;
 
-    while (current !== undefined && current !== END) {
-      if (steps++ >= limit) {
+    while (active.size > 0) {
+      if (step >= limit) {
         throw new Error(`재귀 한도(${limit})를 초과했다.`);
       }
-      const node = this.nodes.get(current);
-      if (node === undefined) {
-        throw new Error(`노드 '${current}'가 없다.`);
-      }
-      // 채널 → 상태 객체를 만들어 노드에 주고, 반환된 부분 상태를 채널에 쓴다.
-      const update = await node(readChannels<S>(channels));
-      writeToChannels(channels, update);
+      // 결정적 순서(이름 정렬) — 리듀서 fold 순서를 고정.
+      const names = [...active].sort();
+
+      // Execute: 모두 같은 스냅샷을 읽고(프리즈) 병렬 실행. 쓰기는 버퍼(반환값).
+      const snapshot = readChannels<S>(channels);
+      const updates = await Promise.all(
+        names.map((name) => {
+          const node = this.nodes.get(name);
+          if (node === undefined) {
+            throw new Error(`노드 '${name}'가 없다.`);
+          }
+          return node(snapshot);
+        }),
+      );
+
+      // Update: 모아서 한 번에 반영. 같은 채널로 온 여러 값은 리듀서가 fold.
+      applyWrites(channels, collectWrites(updates));
+
       yield {
-        node: current,
+        step,
+        nodes: names,
         state: readChannels<S>(channels),
         channels: snapshotChannels(channels),
       };
-      current = this.edges.get(current);
-      if (current === undefined) {
-        throw new Error(`노드에 아웃엣지가 없다.`);
+
+      // Plan(다음): 실행한 노드들의 아웃엣지 대상(END 제외), 중복 제거.
+      const next = new Set<string>();
+      for (const name of names) {
+        for (const to of this.edges.get(name) ?? []) {
+          if (to !== END) {
+            next.add(to);
+          }
+        }
       }
+      active = next;
+      step++;
     }
+
     return readChannels<S>(channels);
   }
 

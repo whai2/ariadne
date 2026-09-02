@@ -99,7 +99,7 @@ export const PAGE = `<!doctype html>
       method: "POST", body: JSON.stringify({ id: currentId, input: input }),
     })).json();
     if (res.error) { box.innerHTML = "<p style='color:#c00'>" + res.error + "</p>"; return; }
-    box.innerHTML = res.steps.map(function (s, i) {
+    box.innerHTML = res.steps.map(function (s) {
       var rows = s.channels.map(function (c) {
         var badge = c.available
           ? "<span class='ok'>● available</span>"
@@ -108,8 +108,8 @@ export const PAGE = `<!doctype html>
         return "<tr><td class='k'>" + c.key + "</td><td class='t'>[" + c.type +
           "]</td><td>" + badge + "</td><td class='v'>" + val + "</td></tr>";
       }).join("");
-      return "<div class='step'><div class='node'>" + (i + 1) + ". " + s.node + "</div>" +
-        "<table class='ch'><tr><th>channel</th><th>type</th><th>state</th><th>value</th></tr>" +
+      return "<div class='step'><div class='node'>Step " + s.step + ": " + s.nodes.join(" · ") +
+        "</div><table class='ch'><tr><th>channel</th><th>type</th><th>state</th><th>value</th></tr>" +
         rows + "</table></div>";
     }).join("");
   }

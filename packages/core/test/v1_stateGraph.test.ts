@@ -62,12 +62,12 @@ describe("V1 · 최소 실행 그래프", () => {
       expect(() => g.addEdge("a", "nope")).toThrow();
     });
 
-    it("한 노드에 아웃엣지 2개는 에러 (V1은 선형만)", () => {
+    it("한 노드에 아웃엣지 2개(분기)는 V4부터 허용된다", () => {
       const g = new StateGraph<S>();
       g.addNode("a", () => ({}));
       g.addNode("b", () => ({}));
       g.addEdge("a", "b");
-      expect(() => g.addEdge("a", END)).toThrow();
+      expect(() => g.addEdge("a", END)).not.toThrow();
     });
 
     it("진입 엣지 없이 compile 하면 에러", () => {

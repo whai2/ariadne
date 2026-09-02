@@ -27,12 +27,14 @@ describe("core 관찰 API (Studio가 요구)", () => {
     ]);
   });
 
-  it("stream()이 스텝별로 {node, state}를 순서대로 내보낸다", async () => {
+  it("stream()이 superstep별로 {step, nodes, state}를 순서대로 내보낸다", async () => {
     const steps: StepUpdate<S>[] = [];
     for await (const step of linear().stream({ text: "start", steps: 0 })) {
       steps.push(step);
     }
-    expect(steps.map((s) => s.node)).toEqual(["a", "b"]);
+    // 선형이라 스텝당 노드 1개.
+    expect(steps.map((s) => s.nodes)).toEqual([["a"], ["b"]]);
+    expect(steps.map((s) => s.step)).toEqual([0, 1]);
     expect(steps[0]?.state).toEqual({ text: "start a", steps: 1 });
     expect(steps[1]?.state).toEqual({ text: "start a b", steps: 2 });
   });
