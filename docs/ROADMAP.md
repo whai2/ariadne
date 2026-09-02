@@ -9,6 +9,8 @@ LangGraph를 TypeScript로 **바닥부터 재구현**하며 내부 구조를 학
 
 참조 원본(Python): `/Users/no-eunsu/coxwave/langgraph/libs/langgraph/langgraph/` — 읽기 전용 참고, **복붙 금지**.
 
+> **이 문서는 Core 트랙이다.** 프로젝트는 모노레포이며, 이 로드맵(V1~V8)은 `packages/core`(`@ariadne/core`) 그래프 엔진을 다룬다. 전체 비전(올인원 프레임워크 · Studio · 3 트랙)은 [VISION.md](VISION.md) 참조. **지금 집중 = Core 트랙.**
+
 ## 이 방식의 규칙
 
 - **매 단계가 실행된다.** V1부터 `bun test`로 실제 그래프가 도는 걸 본다.
@@ -105,4 +107,4 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - 커밋 메시지: conventional, 본문에 참조한 Python 원본 파일 명시, co-author 트레일러.
 
 ## 파일 구조 (자연히 수렴)
-파일은 필요한 곳에 생기고, 여러 곳에서 쓰이면 추출한다. 최종 지향점: `src/{constants,errors,types,channels,pregel,graph}/`. 예제/데모는 `examples/`, 분석 노트는 `docs/notes/`.
+Core 엔진 코드는 **`packages/core/`** 아래에 산다 (`src/`, `test/`). 파일은 필요한 곳에 생기고, 여러 곳에서 쓰이면 추출한다. Core 내부 최종 지향점: `packages/core/src/{constants,errors,types,channels,pregel,graph}/`. 예제/데모는 `examples/`, 분석 노트는 `docs/notes/`. 나머지 링·Studio는 각자 `packages/*`, `apps/*` (→ [VISION.md](VISION.md)).

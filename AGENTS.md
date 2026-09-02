@@ -5,9 +5,11 @@
 
 ## 이 저장소
 
-LangGraph를 TypeScript로 **바닥부터 재구현**하는 **학습 프로젝트**. 라이브러리 재사용이 목적이 아니라, 내부 구조(채널 · Pregel superstep 루프 · StateGraph 컴파일)를 bottom-up으로 이해하는 것이 목표다.
+**Ariadne** — TypeScript 올인원 에이전트 프레임워크(Mastra 스타일)를 **바닥부터 재구현**하며 배우는 **학습용 모노레포**. 핵심은 LangGraph 스타일 그래프 엔진이고, 그 위에 프레임워크 링(model/tools/agent/memory)과 비주얼 도구 Studio를 두른다.
 
-- **진행 계획·커밋 단위:** [`docs/ROADMAP.md`](docs/ROADMAP.md) — **진화식(walking skeleton) V0~V8**. 항상 이 문서를 따른다.
+- **전체 비전:** [`docs/VISION.md`](docs/VISION.md) — 올인원 프레임워크 · Studio · 3 트랙(Core/Studio/Framework).
+- **지금 집중 = Core 트랙.** 그래프 엔진(`packages/core`, `@ariadne/core`). 진행 계획·커밋 단위: [`docs/ROADMAP.md`](docs/ROADMAP.md) — **진화식 V0~V8**. 항상 이 문서를 따른다.
+- **모노레포:** Bun workspaces. 엔진=`packages/core`(런타임 deps 0 유지), 링=`packages/*`, Studio=`apps/*`. 루트 스크립트가 `bun run --filter '@ariadne/*'`로 팬아웃.
 - **참조 원본(Python):** `/Users/no-eunsu/coxwave/langgraph/libs/langgraph/langgraph/` — 읽기 전용 참고. **복붙 금지**, 개념을 이해해 우리식으로 재구성한다.
 
 ## 작업 방식 (가장 중요)

@@ -1,9 +1,17 @@
-# langgraph-ts
+# Ariadne
 
-LangGraph를 TypeScript로 **바닥부터 재구현**하는 학습 프로젝트.
-목적은 라이브러리 사용이 아니라 **내부 구조(채널 · Pregel superstep 루프 · StateGraph 컴파일)를 bottom-up으로 이해**하는 것.
+TypeScript **올인원 에이전트 프레임워크**(Mastra 스타일)를 바닥부터 재구현하며 배우는 **학습용 모노레포**.
+핵심은 LangGraph 스타일 **그래프 엔진**(`@ariadne/core`)이고, 그 위에 프레임워크 링과 비주얼 도구 **Studio**를 두른다.
 
-전체 진행 계획과 커밋 단위는 [docs/ROADMAP.md](docs/ROADMAP.md) 참조.
+- 전체 비전: [docs/VISION.md](docs/VISION.md)
+- 지금 집중(Core 엔진) 진행 계획: [docs/ROADMAP.md](docs/ROADMAP.md) — 진화식 V0~V8
+
+## 모노레포 (Bun workspaces)
+```
+packages/core   @ariadne/core   ← 그래프 엔진 (지금 여기, 런타임 deps 0)
+packages/*      model·tools·agent·memory (예정)
+apps/studio     비주얼 개발 UI (예정, 조기·최소)
+```
 
 ## 방향
 - **개념 중심 재구성** — async 한 벌, 처음엔 JSON serde, 실제 쓰는 채널/기능만.

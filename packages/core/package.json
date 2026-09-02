@@ -1,0 +1,16 @@
+{
+  "name": "@ariadne/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ariadne 그래프 엔진 — LangGraph의 Pregel/StateGraph 모델을 바닥부터 재구현",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}
