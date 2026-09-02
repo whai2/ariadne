@@ -1,104 +1,108 @@
-# LangGraph TS 포팅 — 커밋 단위 로드맵
+# langgraph-ts 로드맵 — 진화식 (walking skeleton)
 
 ## Context
 
-이 저장소는 LangGraph를 TypeScript로 **직접 재구현**한다.
-목적은 라이브러리 재사용이 아니라 **내부 구조를 bottom-up으로 점진적으로 완전히 이해**하는 것.
-따라서 한 번에 구현하지 않고, **개념 단위로 쪼갠 커밋을 여러 턴에 걸쳐** 진행하며 각 단계를 따로 완주·커밋·분석한다.
+LangGraph를 TypeScript로 **바닥부터 재구현**하며 내부 구조를 학습한다.
+학습 방식은 **진화식**이다: 처음부터 끝까지 **돌아가는 가장 작은 엔진**으로 시작해, 매 단계마다 *여전히 돌아가는* 채로 조금씩 진짜 langgraph 구조로 탈피시킨다.
 
-참조 원본(Python): `/Users/no-eunsu/coxwave/langgraph/libs/`
-- 엔진: `libs/langgraph/langgraph/`
-- 영속성/직렬화(이번 범위 밖): `libs/checkpoint/langgraph/`
+> 이전 버전은 의존성 순서로 주춧돌을 먼저 까는 **bottom-up 계층식**이었다. 그건 "전체 구조를 이미 아는 사람"의 선언 방식이라, 완성이 마지막에 몰려 "작게 돌아가는 걸 보며 배운다"는 목표와 어긋났다. 그래서 **순서를 계층식 → 진화식으로 재구성**했다. (도착지 지도인 "아키텍처 불변식"은 그대로 유지.)
 
-각 커밋(Cn)이 대략 한 작업 단위 = 한 분석 단위. 이 문서를 따라 순서대로 진행한다.
+참조 원본(Python): `/Users/no-eunsu/coxwave/langgraph/libs/langgraph/langgraph/` — 읽기 전용 참고, **복붙 금지**.
+
+## 이 방식의 규칙
+
+- **매 단계가 실행된다.** V1부터 `bun test`로 실제 그래프가 도는 걸 본다.
+- **개념은 "필요해서" 등장한다.** `MISSING` 센티넬은 V2(채널에 '비어있음'이 처음 필요할 때), `TASKS`/`PUSH` 상수는 V6(Send가 생길 때) 태어난다. **미리 `constants.ts`를 채워두지 않는다.** 여러 곳에서 쓰이기 시작하면 그때 모듈로 추출(정리 리팩터).
+- **리팩터가 곧 학습.** "순차 실행 → superstep"(V4)처럼 직접 벽에 부딪힌 뒤 langgraph가 왜 그 복잡성을 갖는지 이해한다.
+- **회귀 안전망.** 각 단계는 이전 단계의 예제 테스트를 깨지 않는다. 예제와 테스트는 계속 쌓인다.
 
 ### 확정된 방향
-- **구현 방식: 개념 중심 재구성** — async 한 벌만(Python의 sync/async 이중 구현 안 함), 처음엔 JSON serde, 파이썬 파일 레이아웃을 1:1로 따르지 않고 우리식 구조로 재조직, 실제 쓰는 채널/기능만.
-- **목표 범위: 실행 엔진까지** — 채널 → Pregel 루프 → 동작하는 StateGraph. (영속성/인터럽트/스트리밍/함수형 API는 이번 로드맵 밖 = 후속 페이즈)
-- **메시지 타입: 의존성 없이 자체 구현** — `@langchain/core` 안 씀. 최소 `BaseMessage` 계층을 직접 정의.
+- **개념 중심 재구성** — async 한 벌, 처음엔 JSON serde, 실제 쓰는 것만.
+- **런타임 의존성 0개** — 메시지 타입도 직접 정의.
+- **목표 범위: 실행 엔진까지** — 채널 → Pregel 루프 → 동작하는 StateGraph. (영속성/인터럽트/스트리밍/함수형 API는 범위 밖.)
 
-### 이번 로드맵에서 의도적으로 제외 (후속 페이즈)
-영속성(checkpointer/InMemorySaver), 인터럽트/HITL, 스트리밍 모드(values 외), 함수형 API(`@entrypoint`/`@task`), 서브그래프, managed values(`IsLastStep`/`RemainingSteps`), cache, remote, sync/async 이중화, msgpack serde, 그래프 시각화, retry/timeout 정책.
-
----
-
-## 핵심 아키텍처 (재구현 시 반드시 보존할 3가지)
-1. **채널이 유일한 공유 가변 상태.** 노드는 채널을 직접 만지지 않고, 쓰기는 버퍼링됐다가 **superstep 경계에서 `applyWrites`로만** 반영된다. (step N의 쓰기는 step N+1에서만 보임 — BSP 모델)
-2. **superstep = Plan → Execute → Update.** Plan: 트리거된 노드 태스크 계산. Execute: 태스크 동시 실행(읽기는 얼어붙은 값, 쓰기는 버퍼). Update: `applyWrites`로 채널에 반영 → 다음 Plan의 입력.
-3. **StateGraph는 순수 sugar.** `compile()`이 노드→`PregelNode`, 엣지→트리거 채널(`EphemeralValue`/`NamedBarrierValue`)로 낮춰서 결국 `Pregel` 객체가 된다. 엔진을 먼저 옳게 만들면 빌더는 그 위의 얇은 컴파일러.
-
-→ **채널 + `applyWrites` + tick 루프**를 먼저 정확히. 그래프 API는 마지막.
+## 아키텍처 불변식 (도착지 지도 — 최종적으로 이렇게 수렴)
+1. **채널이 유일한 공유 가변 상태.** 쓰기는 버퍼링됐다 superstep 경계에서 `applyWrites`로만 반영. (V4에서 도달)
+2. **superstep = Plan → Execute → Update.** step N의 쓰기는 step N+1에서만 보임(BSP). (V4)
+3. **StateGraph는 순수 sugar** — `compile()`이 Pregel로 낮춤. (V7에서 원본 구조에 정합)
 
 ---
 
-## 커밋 로드맵 (C0 → C15, 5개 페이즈)
+## 진화 단계 (V0 → V8)
 
-각 커밋: **무엇을 / 참조 / 분석 포인트 / 검증**. 검증은 커밋마다 vitest 단위 테스트 동봉.
+각 단계: **무엇이 새로 도는가 / 새 개념·상수 / 직전 단계의 벽 / langgraph 참조 / 검증**. 검증은 단계마다 `bun:test` + `docs/notes/NN-*.md` 분석 노트.
 
-### Phase 0 — 스캐폴드
-- [x] **C0 · 프로젝트 셋업 (풀 하네스, Bun 생태계)**
-  - **Bun**(런타임·패키지매니저·테스트러너) + **`tsc --noEmit`**(타입 게이트) + **Biome**(lint/format) + **lefthook**(pre-commit/pre-push) + **GitHub Actions CI**.
-  - `package.json`(`type: module`, 런타임 deps 0, devDeps 4개), strict `tsconfig.json`(ESNext/Bundler, `types:["bun"]`), `biome.json`, `.github/workflows/ci.yml`, `lefthook.yml`, `.gitignore`/`.editorconfig`/`.bun-version`, `README.md`.
-  - 폴더 골격: `src/{constants,errors,types,channels,pregel,graph}/`, `src/index.ts`(barrel), `test/smoke.test.ts`, `docs/notes/`.
-  - 검증: `bun run verify`(typecheck + biome check + bun test) 그린.
+### V0 · 하네스 — [x] 완료
+Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 
-### Phase 1 — 기반 primitive (개념: 공용 어휘)
-- [ ] **C1 · 상수/센티넬** — `MISSING` 센티넬, `START`/`END`, `TASKS`, `PUSH`/`PULL`, 네임스페이스 구분자, 실제 쓸 `CONFIG_KEY_SEND`/`CONFIG_KEY_READ`만.
-  - 참조: `_internal/_constants.py`, `constants.py`, `checkpoint/serde/types.py`.
-  - 분석: 왜 센티넬/예약 채널명이 필요한가.
-- [ ] **C2 · 에러** — `EmptyChannelError`, `InvalidUpdateError`, `GraphRecursionError`, `GraphBubbleUp`/`GraphInterrupt`(값싸니 미리 정의), `createErrorMessage` 헬퍼.
-  - 참조: `errors.py`.
-- [ ] **C3 · 코어 타입** — `Send`(fan-out), `Command`(goto/update 제어흐름), `PregelExecutableTask`/`PregelTaskWrites`+`WritesProtocol`(태스크 자료구조). 엔진이 실제 읽는 필드만 최소로.
-  - 참조: `types.py`, `pregel/_algo.py:93,110,120`.
-  - 분석: `Send`/`Command`가 제어흐름을 어떻게 표현하는가(=예약 채널 `TASKS`로 흐름).
+### V1 · 최소 실행 그래프 (walking skeleton)
+- **도는 것:** `StateGraph` — `addNode(name, fn)`, `addEdge(from, to)`, `compile()` → `invoke(input)`. 선형 `START→a→b→END` 실행.
+- **내부:** 상태 = 평범한 객체. compile은 노드/엣지 맵 보관(거의 no-op). invoke는 START에서 단일 아웃엣지를 따라가며 `state = {...state, ...fn(state)}`, END에서 멈춤.
+- **새 개념·상수:** `START`, `END` (처음 필요한 상수). 노드 = `(state) => 부분상태`.
+- **참조:** `graph/state.py`의 add_node/add_edge/compile/invoke **표면만**.
+- **검증:** 선형 그래프가 상태를 변환.
+- **벽 → 다음:** 상태가 그냥 겹쳐쓰기라 "키별 통일된 저장 규칙"·"같은 키 다중 쓰기"가 애매.
 
-### Phase 2 — 채널 (개념: 유일한 공유 상태)
-- [ ] **C4 · `BaseChannel` + `LastValue`** — 채널 인터페이스(`update`/`get`/`checkpoint`/`fromCheckpoint`/`consume`/`finish`/`isAvailable`) + 기본 채널.
-  - 참조: `channels/base.py`, `channels/last_value.py`(작고 정석적).
-  - 분석: step당 1회 쓰기 불변식, 라이프사이클 훅. 검증: update→get, 동시쓰기 시 `InvalidUpdateError`.
-- [ ] **C5 · `BinaryOperatorAggregate`(리듀서)** — `Annotated[list, add]` 상태키가 컴파일되는 채널.
-  - 참조: `channels/binop.py`.
-  - 분석: 한 step의 여러 쓰기를 이항연산으로 fold. 검증: `add`로 리스트 누적.
-- [ ] **C6 · `Topic` + `EphemeralValue` + `NamedBarrierValue`** — 컴파일러가 쓸 채널들(`TASKS`/fan-out, 엣지 트리거, 다중소스 조인).
-  - 참조: `channels/topic.py`, `ephemeral_value.py`, `named_barrier_value.py`.
-  - 분석: accumulate vs step마다 clear, 배리어(모든 상류가 써야 available).
+### V2 · 채널로 상태 저장
+- **도는 것:** 동일 선형 그래프가 이제 **채널 기반**으로 동일 출력.
+- **내부:** 상태 객체 → `channels: Record<string, LastValue>`. 읽기=각 채널 `get()`, 쓰기=부분상태의 각 키를 `channel.update([v])`.
+- **새 개념·상수:** **`MISSING` 센티넬** + `EmptyChannelError`(채널의 "아직 안 써짐"). `LastValue`(step당 1회 쓰기, 2회면 `InvalidUpdateError`).
+- **참조:** `channels/base.py`, `channels/last_value.py`, `_internal/_typing.py`(MISSING).
+- **검증:** 빈 채널 get→에러, update→get 왕복.
+- **벽 → 다음:** 두 노드가 같은 키를 쓰면 LastValue가 거부 → **누적**이 필요.
 
-### Phase 3 — Pregel 엔진 (개념: BSP superstep 루프) ← 핵심
-- [ ] **C7 · read/write 배관** — `PregelNode`(actor 컨테이너: channels/triggers/bound/writers), `ChannelRead`, `ChannelWrite` + `CONFIG_KEY_READ/SEND` 클로저.
-  - 참조: `pregel/_read.py`, `pregel/_write.py`.
-  - 분석: 노드가 채널을 직접 안 만지고 config 클로저로 읽기/쓰기하는 이유. 검증: 노드가 입력 읽고 쓰기를 버퍼.
-- [ ] **C8 · `applyWrites` (Update 단계, 순수함수)** — 트리거 채널 consume → 채널별 쓰기 그룹핑 → `update()` → 버전 증가 → `updatedChannels` 반환.
-  - 참조: `pregel/_algo.py:232`.
-  - 검증: 손으로 만든 채널/태스크로 쓰기 반영·버전 검증.
-- [ ] **C9 · `prepareNextTasks` (Plan 단계, 순수함수)** — PULL 태스크(triggers ∩ updatedChannels) + PUSH 태스크(`TASKS`의 `Send`).
-  - 참조: `pregel/_algo.py:349,524`.
-  - 검증: 주어진 채널 상태에서 다음에 실행될 노드 집합.
-- [ ] **C10 · `PregelLoop`(tick/afterTick) + `PregelRunner`(동시 실행) + 드라이버** — `while loop.tick(): runner.tick(); loop.afterTick()`.
-  - 참조: `pregel/_loop.py`, `pregel/_runner.py`, `pregel/main.py`의 stream 루프.
-  - 검증: 손으로 배선한 노드/채널이 여러 superstep 거쳐 완료(재귀 한도 도달 시 종료 포함).
-- [ ] **C11 · `Pregel` 애플리케이션 객체 — `invoke()`** — 채널+노드+루프+러너 결합, 입력 매핑/출력 추출. **마일스톤: 손으로 만든 Pregel이 end-to-end 실행.**
-  - 참조: `pregel/main.py`(`Pregel.__init__`/stream), `pregel/_io.py`.
-  - 검증: `input → invoke → output` 왕복.
+### V3 · 리듀서 채널
+- **도는 것:** 상태 키를 `{ reducer }`로 선언하면 값이 **누적**(예: 리스트 concat, 카운터 +).
+- **내부:** 리듀서 있으면 `BinaryOperatorAggregate`, 없으면 `LastValue`로 채널 파생.
+- **참조:** `channels/binop.py`, `graph/state.py`의 `_get_channels`.
+- **검증:** `items: concat`, `count: add` 누적.
+- **벽 → 다음:** 동시에 여러 노드가 돌면 그 업데이트들을 한 번에 접어야 하는데, 지금은 순차라 병렬/팬인이 불가.
 
-### Phase 4 — StateGraph 빌더 (개념: sugar → Pregel로 낮춤)
-- [ ] **C12 · `StateGraph` 스펙 + 채널 파생** — `addNode`/`addEdge`, 상태 스키마 리듀서에서 채널 파생(Annotated→BinOp, 그 외→LastValue).
-  - 참조: `graph/state.py` addNode/addEdge, `_get_channels`.
-  - 검증: 스키마→파생 채널 매핑.
-- [ ] **C13 · `compile()` → `CompiledStateGraph(Pregel)`** — `attachNode`(노드→`PregelNode` + `branch:to:<key>` EphemeralValue 트리거 + writers), `attachEdge`(단순 엣지→트리거 채널 write, 다중소스→NamedBarrierValue). **마일스톤: 선형 그래프 `START→a→b→END` 실행.**
-  - 참조: `graph/state.py:1177,1444,1551`.
-- [ ] **C14 · `addConditionalEdges` + 라우터 + `Send` fan-out** — 조건부 분기와 map-reduce. **마일스톤: 분기/팬아웃 그래프 실행.**
-  - 참조: `graph/state.py:982`, `graph/_branch.py`.
-- [ ] **C15 · (캡스톤) `MessagesState` + `addMessages` + 최소 메시지 타입** — 의존성 없는 `BaseMessage`/`Human`/`AI` 정의 + 메시지 리듀서. 정석 "챗봇형" 그래프를 데모로. **최종 마일스톤: 교과서 LangGraph 예제가 우리 엔진에서 돈다.**
-  - 참조: `graph/message.py`.
+### V4 · superstep (BSP) ← 가장 큰 전환
+- **도는 것:** 다이아몬드 `START→a→{b,c}→d→END` (b,c 병렬, d 팬인) 실행.
+- **내부:** 순차 edge-following → **Plan/Execute/Update** 슈퍼스텝으로 리팩터.
+  - 트리거 채널(`EphemeralValue`): 엣지 = 소스 완료 시 타깃의 트리거 채널에 씀. 노드는 트리거 채널을 구독.
+  - **Plan**(`prepareNextTasks` 최소): 직전 step에 갱신된 채널을 구독하는 노드 = 다음 태스크.
+  - **Execute**: 태스크 동시 실행, 쓰기는 버퍼.
+  - **Update**(`applyWrites`): 버퍼를 채널별로 그룹핑해 update, 갱신 채널 집합 반환 → 다음 Plan.
+- **새 개념:** BSP 루프, 트리거 채널, 팬인용 `NamedBarrierValue`. (필요시 V4a: tick 루프 / V4b: 팬인 배리어로 분할)
+- **참조:** `pregel/_algo.py`(apply_writes, prepare_next_tasks), `pregel/_loop.py`(tick/after_tick), `channels/{ephemeral_value,named_barrier_value}.py`.
+- **검증:** 병렬·팬인 그래프, 재귀 한도 종료.
+- **벽 → 다음:** 고정 엣지만으론 런타임 조건 분기 불가.
+
+### V5 · 조건부 엣지
+- **도는 것:** `addConditionalEdges(source, router)` — router(state)→다음 노드명. 조건 분기/루프 실행.
+- **내부:** 라우터 결과를 해당 트리거 채널 쓰기로.
+- **참조:** `graph/_branch.py`, `graph/state.py:982`.
+- **검증:** 짝/홀 라우팅, 자기 루프.
+- **벽 → 다음:** 정적으로 이름 아는 노드만 가능 — 런타임 N개 동적 생성 불가.
+
+### V6 · Send 팬아웃 (map-reduce)
+- **도는 것:** 입력 리스트 → 각 항목을 동적 병렬 처리 → 리듀서로 취합.
+- **내부:** 노드/라우터가 `Send(node, arg)` 반환 → 예약 `TASKS` 채널 → 다음 tick에 동적 **PUSH** 태스크로 스케줄.
+- **새 개념·상수:** **`TASKS`, `PUSH`, `PULL`**(대역 내 신호 — *필요해서* 등장). `Send`. `Topic` 채널(TASKS 백킹).
+- **참조:** `types.py`(Send), `pregel/_algo.py`의 PUSH 처리, `channels/topic.py`.
+- **검증:** map-reduce 그래프.
+- **벽 → 다음:** 노드 반환/제어흐름이 임시방편 — 원본 구조(Command, PregelNode/ChannelWrite)와 어긋남.
+
+### V7 · Command + compile 정합
+- **도는 것:** 앞의 모든 예제가 **원본과 같은 내부 구조**에서 그대로 돎(리팩터 안전망).
+- **내부:** 노드 반환을 `Command`(goto+update)로 통일. compile을 실제 구조로: 노드→`PregelNode`(triggers/bound/writers), 엣지→`ChannelWrite`가 `branch:to:<key>` 채널에 씀, 다중소스→`NamedBarrierValue`. 읽기/쓰기는 config 클로저(`CONFIG_KEY_READ/SEND`).
+- **새 개념·상수:** `Command`, `CONFIG_KEY_SEND/READ`, `PregelNode`, `ChannelRead/Write`.
+- **참조:** `graph/state.py:1444,1551,1577`, `pregel/_read.py`, `pregel/_write.py`.
+- **검증:** 회귀(V1~V6 예제 전부 통과) + "우리 코드 ↔ langgraph" 구조 대응.
+
+### V8 · 캡스톤 — MessagesState + addMessages
+- **도는 것:** 교과서 챗봇형 그래프(모델 호출은 가짜 함수)에서 대화 상태가 메시지 리스트로 누적.
+- **내부:** 의존성 없는 최소 `BaseMessage`/`Human`/`AI` + `addMessages` 리듀서.
+- **참조:** `graph/message.py`.
 
 ---
-
-## 검증 전략 (전체)
-- **커밋마다 vitest 단위 테스트** 동봉. 순수함수(C8/C9)와 채널(C4~C6)은 특히 격리 테스트가 쉬움.
-- **교차검증(선택):** 동일 그래프를 Python LangGraph(`/Users/no-eunsu/coxwave/langgraph`)로 돌려 출력 비교, 또는 공식 `langgraphjs`를 레퍼런스로 대조. 동작 동치를 학습 확인용으로.
-- **분석 기록:** 각 단계 완주 후 `docs/notes/NN-<topic>.md`에 "이 층에서 배운 것" 짧게 기록 → 점진적 이해가 목표이므로 커밋과 함께 남긴다.
-- 각 마일스톤(C11/C13/C14/C15)에서 실제 그래프를 돌려 눈으로 확인.
 
 ## 진행 방식
-- **C0 → C1 → …** 순서로 하나씩. 각 단계에서 해당 커밋을 완주(구현+테스트+분석노트)하고 커밋 후 정지.
-- 커밋 메시지는 `feat(channels): LastValue …` 식 conventional, 본문에 참조 원본 파일 명시.
+- **V0 → V1 → …** 순서로 한 단계씩. 각 단계에서 구현 + `bun:test` + `docs/notes/NN-*.md` 분석 노트까지 완주하고 커밋 후 멈춘다.
+- 커밋 전 `bun run verify`(typecheck + biome + test) 그린.
+- 커밋 메시지: conventional, 본문에 참조한 Python 원본 파일 명시, co-author 트레일러.
+
+## 파일 구조 (자연히 수렴)
+파일은 필요한 곳에 생기고, 여러 곳에서 쓰이면 추출한다. 최종 지향점: `src/{constants,errors,types,channels,pregel,graph}/`. 예제/데모는 `examples/`, 분석 노트는 `docs/notes/`.

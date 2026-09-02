@@ -7,13 +7,16 @@
 
 LangGraph를 TypeScript로 **바닥부터 재구현**하는 **학습 프로젝트**. 라이브러리 재사용이 목적이 아니라, 내부 구조(채널 · Pregel superstep 루프 · StateGraph 컴파일)를 bottom-up으로 이해하는 것이 목표다.
 
-- **진행 계획·커밋 단위:** [`docs/ROADMAP.md`](docs/ROADMAP.md) (C0~C15). 항상 이 문서를 따른다.
+- **진행 계획·커밋 단위:** [`docs/ROADMAP.md`](docs/ROADMAP.md) — **진화식(walking skeleton) V0~V8**. 항상 이 문서를 따른다.
 - **참조 원본(Python):** `/Users/no-eunsu/coxwave/langgraph/libs/langgraph/langgraph/` — 읽기 전용 참고. **복붙 금지**, 개념을 이해해 우리식으로 재구성한다.
 
 ## 작업 방식 (가장 중요)
 
-- **한 커밋 = 한 개념 = 한 턴.** ROADMAP의 `Cn` 하나씩만 완주하고 커밋 후 멈춘다. 다음 단계를 미리 구현하지 않는다.
-- 각 `Cn`의 "완주" = **구현 + `bun:test` 단위 테스트 + `docs/notes/NN-*.md` 분석 노트**.
+- **진화식.** 매 단계는 *여전히 돌아가는* 엔진이어야 한다. bottom-up으로 부품만 쌓지 말 것.
+- **한 커밋 = 한 단계 = 한 턴.** ROADMAP의 `Vn` 하나씩만 완주하고 커밋 후 멈춘다. 다음 단계를 미리 구현하지 않는다.
+- **개념은 필요할 때 등장.** 상수/센티넬/에러를 미리 선언하지 말고, 그 단계에서 처음 필요할 때 만든다. 여러 곳에서 쓰이면 모듈로 추출.
+- **회귀 안전망.** 각 단계는 이전 단계의 예제 테스트를 깨지 않는다.
+- 각 `Vn`의 "완주" = **구현 + `bun:test` 단위 테스트 + `docs/notes/NN-*.md` 분석 노트**.
 - 커밋 전 반드시 **`bun run verify`** (typecheck + biome + test) 그린.
 - 커밋 메시지: conventional(`feat(channels): ...`), 본문에 참조한 Python 원본 파일 명시, co-author 트레일러.
 
