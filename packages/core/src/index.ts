@@ -13,6 +13,7 @@ export type {
   ChannelSpec,
   GraphView,
   NodeFn,
+  Router,
   StateSchema,
   StepUpdate,
 } from "./types";

@@ -15,6 +15,13 @@ export type StateSchema<S> = { [K in keyof S]?: ChannelSpec<S[K]> };
  */
 export type NodeFn<S> = (state: S) => Partial<S> | Promise<Partial<S>>;
 
+/**
+ * 조건부 엣지의 라우터(V5): 현재 상태를 보고 **다음 노드명(들)**을 고른다.
+ * 노드명 하나, 여러 개(배열 → 팬아웃), 또는 END를 반환할 수 있다. async 허용.
+ * langgraph 대응: graph/_branch.py 의 path 콜러블.
+ */
+export type Router<S> = (state: S) => string | string[] | Promise<string | string[]>;
+
 /** 그래프의 구조(노드/엣지). Studio가 그림을 그릴 때 읽는다. langgraph 대응: get_graph(). */
 export interface GraphView {
   nodes: string[];

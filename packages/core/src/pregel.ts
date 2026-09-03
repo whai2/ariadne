@@ -7,6 +7,7 @@ import type {
   ChannelSpec,
   GraphView,
   NodeFn,
+  Router,
   StateSchema,
   StepUpdate,
 } from "./types";
@@ -109,12 +110,14 @@ function initChannels<S extends object>(
  *
  * superstep(BSP): 활성 노드들을 병렬 실행하고, 쓰기는 버퍼했다 스텝 경계에서 한 번에 반영.
  * 같은 채널로 온 여러 쓰기는 리듀서가 fold한다.
+ * 다음 활성 노드는 정적 엣지 + 조건부 라우터(V5)의 합집합으로 계산한다.
  */
 export class CompiledGraph<S extends object> {
   constructor(
     private readonly nodes: Map<string, NodeFn<S>>,
     private readonly edges: Map<string, string[]>,
     private readonly schema: StateSchema<S> = {},
+    private readonly branches: Map<string, Router<S>[]> = new Map(),
   ) {}
 
   /** 그래프 구조를 읽어 반환한다(그림용). Studio가 이걸로 노드/엣지를 그린다. */
@@ -123,6 +126,33 @@ export class CompiledGraph<S extends object> {
       nodes: [...this.nodes.keys()],
       edges: [...this.edges.entries()].flatMap(([from, tos]) => tos.map((to) => ({ from, to }))),
     };
+  }
+
+  /**
+   * source(노드 또는 START)에서 갈 다음 노드 집합 — 정적 엣지 + 조건부 라우터의 합집합(END 제외).
+   * 라우터는 현재 상태를 보고 노드명(들)/END를 고른다. 모르는 노드를 반환하면 즉시 에러.
+   * langgraph 대응: 정적 엣지의 branch:to 트리거 + Branch 실행(V7에서 채널로 통일).
+   */
+  private async nextTargets(source: string, state: S): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const to of this.edges.get(source) ?? []) {
+      if (to !== END) {
+        out.add(to);
+      }
+    }
+    for (const router of this.branches.get(source) ?? []) {
+      const result = await router(state);
+      for (const to of Array.isArray(result) ? result : [result]) {
+        if (to === END) {
+          continue;
+        }
+        if (!this.nodes.has(to)) {
+          throw new Error(`라우터가 모르는 노드 '${to}'를 반환했다 (source='${source}').`);
+        }
+        out.add(to);
+      }
+    }
+    return out;
   }
 
   /**
@@ -136,8 +166,8 @@ export class CompiledGraph<S extends object> {
   async *stream(input: S): AsyncGenerator<StepUpdate<S>, S> {
     const channels = initChannels(this.schema, input);
 
-    // Plan: 첫 활성 노드 = START의 아웃엣지 대상들.
-    let active = new Set(this.edges.get(START) ?? []);
+    // Plan: 첫 활성 노드 = START의 아웃엣지/라우터 대상들(입력 상태로 라우팅).
+    let active = await this.nextTargets(START, readChannels<S>(channels));
 
     const limit = 100;
     let step = 0;
@@ -163,21 +193,21 @@ export class CompiledGraph<S extends object> {
 
       // Update: 모아서 한 번에 반영. 같은 채널로 온 여러 값은 리듀서가 fold.
       applyWrites(channels, collectWrites(updates));
+      const stateNow = readChannels<S>(channels);
 
       yield {
         step,
         nodes: names,
-        state: readChannels<S>(channels),
+        state: stateNow,
         channels: snapshotChannels(channels),
       };
 
-      // Plan(다음): 실행한 노드들의 아웃엣지 대상(END 제외), 중복 제거.
+      // Plan(다음): 실행한 노드들의 아웃엣지/라우터 대상(END 제외), 중복 제거.
+      // 라우터는 이 스텝 반영 직후 상태(stateNow)를 보고 다음 노드를 고른다.
       const next = new Set<string>();
       for (const name of names) {
-        for (const to of this.edges.get(name) ?? []) {
-          if (to !== END) {
-            next.add(to);
-          }
+        for (const to of await this.nextTargets(name, stateNow)) {
+          next.add(to);
         }
       }
       active = next;

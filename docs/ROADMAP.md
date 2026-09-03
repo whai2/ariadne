@@ -72,7 +72,7 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - **참조:** `pregel/_algo.py`(apply_writes), `pregel/_loop.py`.
 - **벽 → 다음:** 고정 엣지만으론 런타임 조건 분기 불가.
 
-### V5 · 조건부 엣지
+### V5 · 조건부 엣지 — [x] 완료
 - **도는 것:** `addConditionalEdges(source, router)` — router(state)→다음 노드명. 조건 분기/루프 실행.
 - **내부:** 라우터 결과를 해당 트리거 채널 쓰기로.
 - **참조:** `graph/_branch.py`, `graph/state.py:982`.
