@@ -52,6 +52,15 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(steps.at(-1)?.state.log).toEqual(["a", "b", "c", "d"]);
   });
 
+  it("staggered 예제는 비대칭 팬인이라 d가 두 번 실행된다(현재 한계 → V7)", async () => {
+    const { steps } = (await (await run("staggered", { log: [] })).json()) as {
+      steps: Array<{ nodes: string[]; state: { log: string[] } }>;
+    };
+    // Step 2에 d·e가 같이, Step 3에 d가 또 → d 중복 실행
+    expect(steps.map((s) => s.nodes)).toEqual([["a"], ["b", "c"], ["d", "e"], ["d"]]);
+    expect(steps.at(-1)?.state.log).toEqual(["a", "b", "c", "d", "e", "d"]);
+  });
+
   it("grow 예제는 스텝마다 채널 수가 늘어난다", async () => {
     const { steps } = (await (await run("grow", { topic: "AI" })).json()) as {
       steps: Array<{ channels: unknown[] }>;
