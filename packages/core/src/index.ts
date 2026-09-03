@@ -6,6 +6,8 @@ export { BinaryOperatorAggregate } from "./channels/binop";
 export { LastValue } from "./channels/lastValue";
 export { END, START } from "./constants";
 export { EmptyChannelError, InvalidUpdateError } from "./errors";
+export { CompiledGraph } from "./pregel";
+export { StateGraph } from "./stateGraph";
 export type {
   ChannelSnapshot,
   ChannelSpec,
@@ -13,5 +15,4 @@ export type {
   NodeFn,
   StateSchema,
   StepUpdate,
-} from "./stateGraph";
-export { CompiledGraph, StateGraph } from "./stateGraph";
+} from "./types";
