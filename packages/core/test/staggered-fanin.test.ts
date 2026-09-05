@@ -12,14 +12,16 @@ const concatLog: StateSchema<S> = { log: { reducer: (a, b) => [...a, ...b] } };
  *                     ↘c→e→──────↗
  * b는 a 다음(1칸), e는 c 다음(2칸)이라 d로 가는 두 경로 길이가 다르다.
  *
- * 우리 엔진의 한계: 활성 집합을 "직전 스텝 아웃엣지 대상"으로 계산하므로(pregel.ts),
- * 들어오는 엣지 하나만 발화해도 d를 깨운다 → d가 b쪽(step2)과 e쪽(step3) 두 번 실행된다.
- * "진짜 join"이면 b·e가 **둘 다** 도착할 때까지 기다려 d를 **한 번만** 실행해야 한다.
+ * 여기서 **엣지 두 종류의 차이**가 드러난다(V7):
+ * - 개별 엣지 `addEdge("b","d")` + `addEdge("e","d")`: 둘 다 같은 트리거 채널
+ *   `branch:to:d`(EphemeralValue)에 쓴다. 먼저 온 쪽이 곧바로 d를 깨우므로 d가 두 번 돈다.
+ * - 다중소스 엣지 `addEdge(["b","e"], "d")`: `join:b+e:d`(NamedBarrierValue)를 만들고
+ *   b·e가 각자 자기 이름을 쓴다. 둘 다 모여야 열리므로 **도착 스텝이 달라도** d는 한 번.
  *
- * → V7에서 다중소스 엣지를 NamedBarrierValue("join:b+e:d") 채널로 낮추면 해결된다.
- *   이 테스트는 그때까지의 현재(한계) 동작을 고정하는 회귀 가드다.
+ * 즉 "기다림"은 스케줄러가 아니라 **채널 종류가 정한다**. 스케줄링이 채널 위로 올라온
+ * V7이라 가능한 얘기다.
  */
-function staggered() {
+function staggered(join: boolean) {
   const dRuns = { n: 0 };
   const g = new StateGraph<S>(concatLog);
   g.addNode("a", () => ({ log: ["a"] }));
@@ -33,22 +35,36 @@ function staggered() {
   g.addEdge(START, "a");
   g.addEdge("a", "b");
   g.addEdge("a", "c");
-  g.addEdge("b", "d"); // 짧은 경로: b가 step1 뒤 d를 깨움
   g.addEdge("c", "e");
-  g.addEdge("e", "d"); // 긴 경로: e는 step2 뒤에야 d를 깨움
+  if (join) {
+    g.addEdge(["b", "e"], "d"); // 배리어: b·e를 둘 다 기다린다
+  } else {
+    g.addEdge("b", "d"); // 짧은 경로: b가 step1 뒤 d를 깨움
+    g.addEdge("e", "d"); // 긴 경로: e는 step2 뒤에야 d를 깨움
+  }
   g.addEdge("d", END);
   return { graph: g.compile(), dRuns };
 }
 
-describe("비대칭 팬인 — 우리 엔진의 한계(→ V7 NamedBarrierValue)", () => {
-  it("[현재/한계] d가 b·e를 못 기다려 두 번 실행된다", async () => {
-    const { graph, dRuns } = staggered();
+describe("V7 · 비대칭 팬인 — 기다림은 채널 종류가 정한다", () => {
+  it("개별 엣지는 안 기다린다 → 먼저 온 쪽이 d를 깨워 두 번 실행된다", async () => {
+    const { graph, dRuns } = staggered(false);
     const out = await graph.invoke({ log: [] });
 
-    // FIXME(V7): NamedBarrierValue join으로 고치면 아래 기대값이 바뀐다.
-    //   진짜 join → dRuns.n === 1, log의 "d"는 1개, 최종 log 길이 5.
-    expect(dRuns.n).toBe(2); // ← 지금은 2 (한계)
-    expect(out.log.filter((x) => x === "d")).toHaveLength(2); // ← "d"가 중복
+    expect(dRuns.n).toBe(2);
     expect(out.log).toEqual(["a", "b", "c", "d", "e", "d"]);
+  });
+
+  it("다중소스 엣지(NamedBarrierValue)는 b·e를 다 기다려 d가 한 번만 돈다", async () => {
+    const { graph, dRuns } = staggered(true);
+
+    const steps = [];
+    for await (const step of graph.stream({ log: [] })) {
+      steps.push(step);
+    }
+    // step0: a / step1: b·c(b는 배리어에 이름만 쓰고 대기) / step2: e / step3: d
+    expect(steps.map((s) => s.nodes)).toEqual([["a"], ["b", "c"], ["e"], ["d"]]);
+    expect(dRuns.n).toBe(1);
+    expect(steps.at(-1)?.state.log).toEqual(["a", "b", "c", "e", "d"]);
   });
 });

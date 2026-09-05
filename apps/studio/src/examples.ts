@@ -71,9 +71,9 @@ export const examples: Example[] = [
   example<{ log: string[] }>(
     {
       id: "staggered",
-      name: "비대칭 팬인(현재 한계)",
+      name: "비대칭 팬인(개별 엣지)",
       description:
-        "START→a→b→d / a→c→e→d. d로 가는 두 경로 길이가 달라(b는 1칸, e는 2칸) d가 'Step 2: d · e'와 'Step 3: d'로 **두 번** 실행된다 → log 끝이 …d, e, d. 진짜 join이면 b·e를 기다려 한 번이어야 함 → V7 NamedBarrierValue.",
+        "START→a→b→d / a→c→e→d. d로 가는 두 경로 길이가 다르다(b는 1칸, e는 2칸). 개별 엣지는 같은 트리거 채널에 쓰므로 먼저 온 쪽이 곧바로 d를 깨운다 → d가 'Step 2'와 'Step 3'에 **두 번** 실행, log 끝이 …d, e, d. 기다리게 하려면 아래 join 예제처럼 다중소스 엣지를 쓴다.",
       sampleInput: { log: [] },
     },
     (g) => {
@@ -88,6 +88,30 @@ export const examples: Example[] = [
       g.addEdge("b", "d"); // 짧은 경로: b가 step1 뒤 d를 깨움
       g.addEdge("c", "e");
       g.addEdge("e", "d"); // 긴 경로: e는 step2 뒤에야 d를 깨움 → d가 못 기다림
+      g.addEdge("d", END);
+    },
+    { log: { reducer: (a, b) => [...a, ...b] } },
+  ),
+
+  example<{ log: string[] }>(
+    {
+      id: "join",
+      name: "비대칭 팬인(배리어 join)",
+      description:
+        "같은 그래프인데 d로 들어오는 엣지만 다중소스(addEdge([b,e], d))로 바꿨다. join:b+e:d 배리어(NamedBarrierValue)가 b·e를 **둘 다** 기다리므로 d는 Step 3에 **한 번**만 실행된다 → log가 a,b,c,e,d. 기다림은 스케줄러가 아니라 채널 종류가 정한다(V7).",
+      sampleInput: { log: [] },
+    },
+    (g) => {
+      g.addNode("a", () => ({ log: ["a"] }));
+      g.addNode("b", () => ({ log: ["b"] }));
+      g.addNode("c", () => ({ log: ["c"] }));
+      g.addNode("e", () => ({ log: ["e"] }));
+      g.addNode("d", () => ({ log: ["d"] }));
+      g.addEdge(START, "a");
+      g.addEdge("a", "b");
+      g.addEdge("a", "c");
+      g.addEdge("c", "e");
+      g.addEdge(["b", "e"], "d"); // 배리어: b·e가 다 와야 d가 깨어난다
       g.addEdge("d", END);
     },
     { log: { reducer: (a, b) => [...a, ...b] } },

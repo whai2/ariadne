@@ -1,6 +1,7 @@
 // 그래프 엔진의 공유 타입 — StateGraph(빌더)와 Pregel(실행기)이 함께 말하는 "언어".
 // 값 로직은 없다(순수 타입). langgraph 대응: graph/state.py의 Annotation류 + stream()의 관찰 타입.
 
+import type { Command } from "./command";
 import type { Send } from "./send";
 
 /** 상태 키의 병합 정책. reducer가 있으면 누적 채널, 없으면 LastValue. langgraph의 Annotated 대응. */
@@ -12,10 +13,19 @@ export interface ChannelSpec<T> {
 export type StateSchema<S> = { [K in keyof S]?: ChannelSpec<S[K]> };
 
 /**
- * 노드 함수: 현재 상태를 받아 "갱신할 부분 상태"를 반환한다.
- * 반환값은 채널에 반영된다(리듀서면 누적, 아니면 덮어쓰기). async 허용.
+ * 노드가 반환할 수 있는 값(V7): 부분 상태, 또는 상태 갱신+행선지를 함께 담은 `Command`.
+ * 둘 다 writer가 채널 쓰기로 낮춘다.
  */
-export type NodeFn<S> = (state: S) => Partial<S> | Promise<Partial<S>>;
+export type NodeReturn<S> = Partial<S> | Command<S>;
+
+/**
+ * 노드 함수: 입력을 받아 "갱신할 부분 상태"(또는 `Command`)를 반환한다.
+ * 반환값은 채널에 반영된다(리듀서면 누적, 아니면 덮어쓰기). async 허용.
+ *
+ * `I`는 이 노드가 받는 입력 타입이다. 기본은 상태 전체(`S`) — 엣지가 깨운 PULL 노드.
+ * `Send`로만 도는 워커는 payload를 받으므로 `addNode<number>(...)`처럼 지정한다(V7).
+ */
+export type NodeFn<S, I = S> = (input: I) => NodeReturn<S> | Promise<NodeReturn<S>>;
 
 /**
  * 라우팅 대상: 노드명(문자열, END 포함) 또는 Send(V6 동적 팬아웃).

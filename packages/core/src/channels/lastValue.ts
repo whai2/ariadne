@@ -34,4 +34,15 @@ export class LastValue<T> implements BaseChannel<T, T> {
     this.value = values[0] as T;
     return true;
   }
+
+  /** 상태 채널은 읽어도 사라지지 않는다. */
+  consume(): boolean {
+    return false;
+  }
+
+  copy(): LastValue<T> {
+    const next = new LastValue<T>();
+    next.value = this.value;
+    return next;
+  }
 }

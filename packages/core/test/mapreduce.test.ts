@@ -10,8 +10,8 @@ describe("V6 · Send 팬아웃 (map-reduce)", () => {
     const schema: StateSchema<S> = { results: { reducer: (a, b) => [...a, ...b] } };
     function build() {
       const g = new StateGraph<S>(schema);
-      // worker: PUSH 태스크라 payload(숫자 하나)를 입력으로 받는다.
-      g.addNode("square", (n) => ({ results: [(n as unknown as number) ** 2] }));
+      // worker: PUSH 태스크라 payload(숫자 하나)를 입력으로 받는다 → addNode<number>. (V7)
+      g.addNode<number>("square", (n) => ({ results: [n ** 2] }));
       g.addConditionalEdges(START, (s) => s.items.map((i) => new Send("square", i)));
       g.addEdge("square", END);
       return g.compile();
@@ -28,7 +28,7 @@ describe("V6 · Send 팬아웃 (map-reduce)", () => {
     const schema: StateSchema<S> = { results: { reducer: (a, b) => [...a, ...b] } };
     function build() {
       const g = new StateGraph<S>(schema);
-      g.addNode("square", (n) => ({ results: [(n as unknown as number) ** 2] }));
+      g.addNode<number>("square", (n) => ({ results: [n ** 2] }));
       g.addConditionalEdges(START, (s) => s.items.map((i) => new Send("square", i)));
       g.addEdge("square", END);
       return g.compile();
@@ -49,7 +49,7 @@ describe("V6 · Send 팬아웃 (map-reduce)", () => {
     const schema: StateSchema<S> = { seen: { reducer: (a, b) => [...a, ...b] } };
     const g = new StateGraph<S>(schema);
     // item을 그대로 남긴다 → 각 태스크가 서로 다른 자기 항목을 받았음을 증명
-    g.addNode("echo", (item) => ({ seen: [item as unknown as string] }));
+    g.addNode<string>("echo", (item) => ({ seen: [item] }));
     g.addConditionalEdges(START, (s) => s.items.map((i) => new Send("echo", i)));
     g.addEdge("echo", END);
 
@@ -66,7 +66,7 @@ describe("V6 · Send 팬아웃 (map-reduce)", () => {
     const schema: StateSchema<S> = { doubled: { reducer: (a, b) => [...a, ...b] } };
     const g = new StateGraph<S>(schema);
     g.addNode("fan", () => ({})); // 통과 노드(여기서 팬아웃)
-    g.addNode("double", (n) => ({ doubled: [(n as unknown as number) * 2] }));
+    g.addNode<number>("double", (n) => ({ doubled: [n * 2] }));
     g.addNode("sum", (s) => ({ total: s.doubled.reduce((a, b) => a + b, 0) }));
     g.addEdge(START, "fan");
     g.addConditionalEdges("fan", (s) => s.nums.map((n) => new Send("double", n)));

@@ -3,10 +3,15 @@
 export type { BaseChannel } from "./channels/base";
 export { MISSING } from "./channels/base";
 export { BinaryOperatorAggregate } from "./channels/binop";
+export { EphemeralValue } from "./channels/ephemeralValue";
 export { LastValue } from "./channels/lastValue";
-export { END, START } from "./constants";
+export { NamedBarrierValue } from "./channels/namedBarrier";
+export { Topic } from "./channels/topic";
+export { Command } from "./command";
+export { branchTo, END, joinTo, START, TASKS } from "./constants";
 export { EmptyChannelError, InvalidUpdateError } from "./errors";
-export { CompiledGraph } from "./pregel";
+export { CompiledGraph, type PregelSpec } from "./pregel";
+export type { ChannelWriteEntry, PregelNode, Writer } from "./pregelNode";
 export { Send } from "./send";
 export { StateGraph } from "./stateGraph";
 export type {
@@ -14,6 +19,7 @@ export type {
   ChannelSpec,
   GraphView,
   NodeFn,
+  NodeReturn,
   Router,
   RouteTarget,
   StateSchema,

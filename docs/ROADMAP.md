@@ -26,7 +26,7 @@ LangGraph를 TypeScript로 **바닥부터 재구현**하며 내부 구조를 학
 ## 아키텍처 불변식 (도착지 지도 — 최종적으로 이렇게 수렴)
 1. **채널이 유일한 공유 가변 상태.** 쓰기는 버퍼링됐다 superstep 경계에서 `applyWrites`로만 반영. (V4에서 도달)
 2. **superstep = Plan → Execute → Update.** step N의 쓰기는 step N+1에서만 보임(BSP). (V4)
-3. **StateGraph는 순수 sugar** — `compile()`이 Pregel로 낮춤. (V7에서 원본 구조에 정합)
+3. **StateGraph는 순수 sugar** — `compile()`이 Pregel로 낮춤(노드→`PregelNode`, 엣지·라우터·`Command`→채널 쓰기). (V7에서 도달)
 
 ---
 
@@ -87,12 +87,13 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - **검증:** map-reduce 그래프.
 - **벽 → 다음:** 노드 반환/제어흐름이 임시방편 — 원본 구조(Command, PregelNode/ChannelWrite)와 어긋남.
 
-### V7 · Command + compile 정합
-- **도는 것:** 앞의 모든 예제가 **원본과 같은 내부 구조**에서 그대로 돎(리팩터 안전망).
-- **내부:** 노드 반환을 `Command`(goto+update)로 통일. compile을 실제 구조로: 노드→`PregelNode`(triggers/bound/writers), 엣지→`ChannelWrite`가 `branch:to:<key>` 채널에 씀, 다중소스→`NamedBarrierValue`. 읽기/쓰기는 config 클로저(`CONFIG_KEY_READ/SEND`).
-- **새 개념·상수:** `Command`, `CONFIG_KEY_SEND/READ`, `PregelNode`, `ChannelRead/Write`.
-- **참조:** `graph/state.py:1444,1551,1577`, `pregel/_read.py`, `pregel/_write.py`.
-- **검증:** 회귀(V1~V6 예제 전부 통과) + "우리 코드 ↔ langgraph" 구조 대응.
+### V7 · Command + compile 정합 — [x] 완료
+- **도는 것:** 앞의 모든 예제가 **원본과 같은 내부 구조**에서 그대로 돎(리팩터 안전망). + 비대칭 팬인 join.
+- **내부:** compile이 노드→`PregelNode`(triggers/bound/writers), 엣지·라우터·`Command.goto`→ 전부 **채널 쓰기**(`branch:to:<노드>` / `TASKS`), 다중소스 엣지(`addEdge([b,e], d)`)→`NamedBarrierValue`. 스케줄링은 "갱신된 트리거 채널을 구독한 정점"으로 대체 — `dedupePullTasks` 삭제.
+- **새 개념·상수:** `Command`, `PregelNode`/`ChannelWriteEntry`/`Writer`, `TASKS`·`branchTo`·`joinTo`, 채널 `EphemeralValue`/`NamedBarrierValue`/`Topic`, `BaseChannel.consume/copy`. 라우터는 **로컬 읽기**(자기 쓰기만 반영)로 상태를 본다. `addNode<I>`로 Send 워커 payload 타입 정리.
+- **안 한 것(정직):** `CONFIG_KEY_READ/SEND` 클로저 주입(우리 writer는 엔진이 직접 호출 → `read`를 인자로), `PregelNode.channels/mapper`(그래프당 스키마 1개), START를 진짜 정점으로 두기(초기화에 접음), 채널 버전(`versions_seen`), `trigger_to_nodes` 역인덱스.
+- **참조:** `pregel/_read.py`, `pregel/_write.py`, `pregel/_algo.py`(apply_writes·prepare_next_tasks·local_read), `graph/state.py:1509,1531,1551,1760`, `channels/{ephemeral_value,named_barrier_value,topic}.py`, `types.py`(Command).
+- **검증:** 회귀(V1~V6 예제 전부 통과) + `getChannelNames()`로 낮춘 구조 대응 + 새 채널 3종 단위 테스트. ([노트 11](notes/11-v7-pregel.md))
 
 ### V8 · 캡스톤 — MessagesState + addMessages
 - **도는 것:** 교과서 챗봇형 그래프(모델 호출은 가짜 함수)에서 대화 상태가 메시지 리스트로 누적.

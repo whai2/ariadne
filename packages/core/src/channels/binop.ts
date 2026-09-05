@@ -37,4 +37,15 @@ export class BinaryOperatorAggregate<T> implements BaseChannel<T, T> {
     this.value = acc;
     return true;
   }
+
+  /** 상태 채널은 읽어도 사라지지 않는다. */
+  consume(): boolean {
+    return false;
+  }
+
+  copy(): BinaryOperatorAggregate<T> {
+    const next = new BinaryOperatorAggregate<T>(this.operator);
+    next.value = this.value;
+    return next;
+  }
 }
