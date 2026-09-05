@@ -1,4 +1,5 @@
-import type { CompiledGraph, StepUpdate } from "@ariadne/core";
+import type { BaseMessage, CompiledGraph, StepUpdate } from "@ariadne/core";
+import { chatTurn, providerList } from "./chat";
 import type { Example } from "./examples";
 import { PAGE } from "./page";
 
@@ -13,11 +14,13 @@ export interface Studio {
 }
 
 /**
- * 여러 예제 그래프를 관찰하는 최소 스튜디오.
- * - GET  /              → 브라우저 UI(HTML)
- * - GET  /api/examples  → 예제 목록(id/name/description/sampleInput)
- * - GET  /api/graph?id  → 그 예제의 구조(getGraph)
- * - POST /api/run       → { id, input }으로 stream을 돌려 스텝별 상태/채널 반환
+ * 최소 스튜디오. 두 가지를 한다 — **대화**와 **관찰**.
+ * - GET  /               → 브라우저 UI(HTML)
+ * - GET  /api/providers  → 프로바이더 드롭다운(어느 게 지금 쓸 수 있는지까지)
+ * - POST /api/chat       → { spec, messages, system } 한 턴 대화 (그래프로 돈다)
+ * - GET  /api/examples   → 예제 목록
+ * - GET  /api/graph?id   → 그 예제의 구조(getGraph)
+ * - POST /api/run        → { id, input }으로 stream을 돌려 스텝별 상태/채널 반환
  */
 export function createStudio(examples: Example[]): Studio {
   const byId = new Map(examples.map((e) => [e.id, e]));
@@ -47,6 +50,35 @@ export function createStudio(examples: Example[]): Studio {
         return new Response(PAGE, {
           headers: { "content-type": "text/html; charset=utf-8" },
         });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/providers") {
+        return Response.json(providerList());
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/chat") {
+        let body: { spec?: string; messages?: BaseMessage[]; system?: string };
+        try {
+          body = (await req.json()) as typeof body;
+        } catch {
+          return Response.json({ error: "입력 JSON 파싱 실패" }, { status: 400 });
+        }
+        if (!body.spec || !Array.isArray(body.messages) || body.messages.length === 0) {
+          return Response.json({ error: "spec과 messages가 필요하다" }, { status: 400 });
+        }
+        try {
+          // 모델 생성 실패(키 없음)와 호출 실패를 같은 자리에서 잡는다 —
+          // 둘 다 사용자가 고칠 수 있는 것이라 메시지를 그대로 보여준다.
+          return Response.json(
+            await chatTurn(
+              body.spec,
+              body.messages,
+              body.system === undefined ? {} : { system: body.system },
+            ),
+          );
+        } catch (e) {
+          return Response.json({ error: describe(e) }, { status: 500 });
+        }
       }
 
       if (req.method === "GET" && url.pathname === "/api/examples") {

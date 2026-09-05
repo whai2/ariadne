@@ -211,3 +211,78 @@ function runLive(id: string, input: unknown) {
     new Request("http://x/api/run", { method: "POST", body: JSON.stringify({ id, input }) }),
   );
 }
+
+describe("Chat 플레이그라운드", () => {
+  function chat(body: unknown) {
+    return studio.fetch(
+      new Request("http://x/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  it("GET /api/providers — 드롭다운에 쓸 목록. **뭐가 필요한지까지** 알려준다", async () => {
+    const list = (await (
+      await studio.fetch(new Request("http://x/api/providers"))
+    ).json()) as Array<{ id: string; ready: boolean; need: string; suggested?: string }>;
+
+    expect(list.length).toBeGreaterThan(150); // 어댑터가 맡는 것 전부
+    // 미지원(Bedrock 등)은 고를 수 없어야 한다 — 고르면 실패할 게 뻔하다.
+    expect(list.map((p) => p.id)).not.toContain("amazon-bedrock");
+
+    const groq = list.find((p) => p.id === "groq");
+    expect(groq?.need).toContain("GROQ_API_KEY"); // 키가 없으면 이름을 말해준다
+    expect(groq?.suggested).toBeTruthy(); // 모델 칸 placeholder
+
+    // 준비된 것이 앞에 온다(드롭다운 첫 그룹).
+    const firstNotReady = list.findIndex((p) => !p.ready);
+    const lastReady = list.map((p) => p.ready).lastIndexOf(true);
+    if (firstNotReady !== -1 && lastReady !== -1) expect(lastReady).toBeLessThan(firstNotReady);
+  });
+
+  it("spec이나 messages가 없으면 400", async () => {
+    expect((await chat({ messages: [{ role: "human", content: "x" }] })).status).toBe(400);
+    expect((await chat({ spec: "claude-code/sonnet" })).status).toBe(400);
+    expect((await chat({ spec: "claude-code/sonnet", messages: [] })).status).toBe(400);
+  });
+
+  it("모델 생성 실패는 **고칠 수 있는 메시지**로 돌아온다", async () => {
+    const body = (await (
+      await chat({ spec: "groq/llama-3.3-70b", messages: [{ role: "human", content: "hi" }] })
+    ).json()) as { error: string };
+    expect(body.error).toContain("GROQ_API_KEY");
+  });
+});
+
+describe.skipIf(!hasCli)("Chat → 진짜 모델 (구독 자격증명)", () => {
+  it("대화가 이어진다 — 이력을 보내면 모델이 앞 턴을 안다", async () => {
+    const ask = (messages: unknown) =>
+      studio.fetch(
+        new Request("http://x/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ spec: "claude-code/sonnet", messages, system: "아주 짧게." }),
+        }),
+      );
+
+    const turn1 = (await (
+      await ask([{ role: "human", content: "내가 좋아하는 숫자는 7이야. 알겠다고만 답해." }])
+    ).json()) as { messages: Array<{ role: string; content: string }>; steps: unknown[] };
+
+    expect(turn1.messages).toHaveLength(1);
+    expect(turn1.messages[0]?.role).toBe("ai");
+    expect(turn1.steps).toHaveLength(1); // 챗도 그래프로 돈다 — 스텝이 관찰된다
+
+    const history = [
+      { role: "human", content: "내가 좋아하는 숫자는 7이야. 알겠다고만 답해." },
+      ...turn1.messages,
+      { role: "human", content: "내가 좋아하는 숫자는? 숫자만." },
+    ];
+    const turn2 = (await (await ask(history)).json()) as {
+      messages: Array<{ content: string }>;
+    };
+    expect(turn2.messages[0]?.content).toContain("7");
+  }, 180_000);
+});
