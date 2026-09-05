@@ -11,7 +11,10 @@
 
 export type { AnthropicChatConfig, CreateMessage } from "./anthropic";
 export { anthropicChat, extractText, toAnthropicMessages } from "./anthropic";
+export type { ClaudeCodeConfig, ClaudeCodeResult, RunCli } from "./claudeCode";
+export { buildArgs, claudeCodeChat, parseResult, toPrompt } from "./claudeCode";
 export {
+  ClaudeCodeError,
   EmptyConversationError,
   MissingApiKeyError,
   MissingProviderConfigError,

@@ -12,6 +12,7 @@
 // 방식을 쓴다. 우리는 후자다 — 어댑터 둘로 대부분이 덮인다.
 
 import { anthropicChat } from "./anthropic";
+import { claudeCodeChat } from "./claudeCode";
 import {
   MissingApiKeyError,
   MissingProviderConfigError,
@@ -24,8 +25,11 @@ import type { ChatModel } from "./types";
 
 /** 프로바이더 한 개의 접속 정보. 생성기가 models.dev에서 뽑아 채운다. */
 export interface ProviderEntry {
-  /** 어느 와이어 포맷인가 = 어느 어댑터가 맡나. */
-  format: "anthropic" | "openai" | "unsupported";
+  /**
+   * 어느 어댑터가 맡나. 앞의 둘은 **와이어 포맷**이 다르고,
+   * `claudeCode`는 아예 **트랜스포트**가 다르다(HTTP가 아니라 로컬 서브프로세스).
+   */
+  format: "anthropic" | "openai" | "claudeCode" | "unsupported";
   /** 사람이 읽는 이름. */
   name: string;
   /** 베이스 URL. 없으면 어댑터(SDK)의 기본값을 쓴다. `${VAR}`를 포함할 수 있다(→ `apiVars`). */
@@ -153,6 +157,17 @@ export interface ModelConfig {
  */
 export function model(spec: string, config: ModelConfig = {}): ChatModel {
   const { provider, modelId, entry } = resolveSpec(spec);
+
+  // Claude Code는 HTTP를 안 탄다 — baseURL도 API 키도 우리 소관이 아니다.
+  // 자격증명은 `claude` 바이너리가 자기 것을 쓴다(로그인돼 있으면 그대로 돈다).
+  if (entry.format === "claudeCode") {
+    return claudeCodeChat({
+      provider,
+      ...(modelId === "default" ? {} : { model: modelId }),
+      ...(config.system === undefined ? {} : { system: config.system }),
+    });
+  }
+
   const env = config.env ?? process.env;
   const apiVars = entry.apiVars ?? [];
 

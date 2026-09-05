@@ -78,6 +78,18 @@ export class MissingProviderConfigError extends Error {
   }
 }
 
+/**
+ * `claude` 서브프로세스가 실패했다. HTTP가 아니므로 상태 코드가 없고,
+ * **종료 코드·stderr·JSON의 subtype**이 실패 신호다.
+ * 흔한 원인: 바이너리 없음 · 로그인 안 됨 · 사용량 한도.
+ */
+export class ClaudeCodeError extends Error {
+  constructor(detail: string) {
+    super(`Claude Code ${detail}`);
+    this.name = "ClaudeCodeError";
+  }
+}
+
 /** API 키를 못 찾았다. **어느 환경변수를 채워야 하는지 이름을 알려준다.** */
 export class MissingApiKeyError extends Error {
   readonly provider: string;

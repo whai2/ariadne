@@ -206,9 +206,12 @@ describe("레지스트리 — '200개 프로바이더'의 실체", () => {
     expect(openai.length).toBeGreaterThan(anthropic.length * 10); // 압도적으로 OpenAI 호환
     expect(unsupported).toContain("amazon-bedrock"); // 서명 인증은 baseURL로 못 덮는다
 
-    // 어댑터가 둘뿐이라는 걸 형식으로도 못박는다.
+    // HTTP를 타는 프로바이더의 와이어 포맷은 여전히 둘뿐이다.
     const formats = new Set([...anthropic, ...openai].map((id) => PROVIDERS[id]?.format));
     expect([...formats].sort()).toEqual(["anthropic", "openai"]);
+
+    // 세 번째는 포맷이 아니라 **트랜스포트**가 다른 하나(로컬 서브프로세스)다.
+    expect(listProviders("claudeCode")).toEqual(["claude-code"]);
   });
 
   test("자주 쓰는 프로바이더가 실제로 들어있다", () => {
@@ -217,8 +220,10 @@ describe("레지스트리 — '200개 프로바이더'의 실체", () => {
     }
   });
 
-  test("모든 엔트리가 인증 방법을 안다", () => {
+  test("HTTP 프로바이더는 전부 인증 방법을 안다", () => {
     for (const [id, entry] of Object.entries(PROVIDERS)) {
+      // claude-code만 예외 — 자격증명이 우리 밖(claude 바이너리)에 있다.
+      if (entry.format === "claudeCode") continue;
       expect(entry.env.length, `${id}에 env가 없다`).toBeGreaterThan(0);
     }
   });

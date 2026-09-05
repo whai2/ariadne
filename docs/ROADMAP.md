@@ -158,6 +158,15 @@ API 키 하나로 표현되지 않는 자격증명을 다룬다. `ProviderEntry`
 
 > **정액제 플랜은 이미 다 된다.** Alibaba·Tencent·MiniMax·Kimi·Xiaomi·StepFun 등의 coding/token plan 20개는 **API 키를 주는 구독**이라 F1.5 구조에 그대로 맞는다(`model("minimax-coding-plan/MiniMax-M2")`). 인증 계층이 필요한 건 키가 아닌 자격증명을 쓰는 쪽이다.
 
+### F1.7 · Claude Code 트랜스포트 — [x] 완료
+- **도는 것:** `model("claude-code/sonnet")` — **API 키 없이** 구독 자격증명으로 그래프가 돈다. 프레임워크를 통한 **첫 실호출 검증**이 여기서 났다.
+- **핵심:** 앞의 두 어댑터는 *와이어 포맷*이 달랐다(Anthropic vs OpenAI). 이건 **트랜스포트**가 다르다 — HTTP를 안 타고 `claude` 바이너리를 spawn한다. 자격증명을 우리가 만지지 않는 게 요점: CLI가 자기 것을 쓴다.
+- **의존성 0으로 구현.** 처음엔 `@anthropic-ai/claude-agent-sdk`로 짰는데 플랫폼 네이티브 바이너리가 **220MB**였다. CLI를 열어보니 `claude -p --output-format json`이 필요한 걸 그대로 준다 — SDK는 그걸 감싼 것이라 단발 왕복엔 `spawn`으로 충분했다. (세션·툴·승인 게이트를 살릴 때 SDK가 값을 한다 → F3)
+- **하네스를 ChatModel로 좁히기:** print 모드 · 내장 툴 전면 차단 · `--system-prompt`로 Claude Code 페르소나 제거. 프롬프트는 **stdin**으로(인자는 길이·이스케이프 문제).
+- **손실(정직):** `-p`는 문자열 하나만 받으므로 대화를 텍스트로 직렬화한다 — 모델이 보는 건 진짜 대화 구조가 아니다. 진짜 멀티턴은 세션이 필요하고 `ChatModel`보다 큰 인터페이스를 요구한다(F3). **id도 안 싣는다** — `session_id`를 메시지 id로 쓰면 같은 세션의 답변끼리 서로를 덮어쓴다(V8 교체 규칙).
+- **깨진 불변식:** "어댑터는 둘뿐"이 이제 틀렸다. 의미를 나눠 고쳤다 — HTTP 프로바이더의 *와이어 포맷*은 여전히 둘, 세 번째는 *트랜스포트*가 다른 하나. `claude-code`는 `env: []`라 "모든 엔트리가 인증 방법을 안다"에도 예외가 생겼다(자격증명이 우리 밖에 있다).
+- **검증:** 56 pass / 3 skip. 순수 함수 3종 + 어댑터 + 그래프 통합 + **실호출**(CLI 없으면 skip). ([노트 15](notes/15-f1_7-claude-code.md))
+
 ### F2 · 툴 링 — `@ariadne/tools` (예정)
 F1의 벽을 정면으로 받는다. **core의 메시지 타입 확장**(`content`를 블록 배열로, tool 역할 추가)이 선행되고, 그 위에 툴 정의/실행. ReAct 예제가 문자열 규약 없이 진짜로 돈다.
 

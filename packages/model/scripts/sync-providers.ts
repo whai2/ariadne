@@ -21,6 +21,14 @@ const OUT = new URL("../src/registry.generated.ts", import.meta.url);
  * 여기 있는 것들은 각 프로바이더 문서에서 "OpenAI SDK에 baseURL만 바꿔 끼우면 된다"를
  * 확인한 것만 넣는다. api가 비어 있으면 문서에 적힌 베이스 URL을 같이 적는다.
  */
+/**
+ * models.dev에 **없는** 프로바이더. HTTP 엔드포인트가 아니라 로컬 `claude` 바이너리라
+ * 레지스트리 원본이 알 리가 없다. 손으로 넣는다.
+ */
+const HAND_ADDED: Record<string, { format: "claudeCode"; name: string; env: string[] }> = {
+  "claude-code": { format: "claudeCode", name: "Claude Code (로컬 CLI)", env: [] },
+};
+
 const OVERRIDES: Record<string, { format: "openai"; api?: string }> = {
   openrouter: { format: "openai", api: "https://openrouter.ai/api/v1" },
   groq: { format: "openai", api: "https://api.groq.com/openai/v1" },
@@ -61,7 +69,15 @@ const res = await fetch(REGISTRY_URL);
 if (!res.ok) throw new Error(`models.dev 응답 ${res.status}`);
 const raw = (await res.json()) as Record<string, RawProvider>;
 
-const rows = Object.entries(raw)
+const rows: Array<{
+  id: string;
+  name: string;
+  format: "anthropic" | "openai" | "unsupported" | "claudeCode";
+  api: string | undefined;
+  env: string[];
+  npm: string;
+  models: number;
+}> = Object.entries(raw)
   .map(([id, p]) => {
     const override = OVERRIDES[id];
     return {
@@ -74,10 +90,15 @@ const rows = Object.entries(raw)
       models: Object.keys(p.models ?? {}).length,
     };
   })
-  .filter((r) => r.env.length > 0) // 인증 방법을 모르면 우리가 부를 수 없다
+  .filter((r) => r.env.length > 0) // 인증 방법을 모르면 우리가 부를 수 없다 (손으로 넣는 건 아래서 합류)
   .sort((a, b) => a.id.localeCompare(b.id));
 
-const counts = { anthropic: 0, openai: 0, unsupported: 0 };
+for (const [id, h] of Object.entries(HAND_ADDED)) {
+  rows.push({ id, name: h.name, format: h.format, api: undefined, env: h.env, npm: "", models: 0 });
+}
+rows.sort((a, b) => a.id.localeCompare(b.id));
+
+const counts = { anthropic: 0, openai: 0, unsupported: 0, claudeCode: 0 };
 for (const r of rows) counts[r.format] += 1;
 
 /**
@@ -124,5 +145,5 @@ ${body}
 await Bun.write(OUT, file);
 console.log(
   `${rows.length}개 프로바이더 생성 → src/registry.generated.ts\n` +
-    `  anthropic ${counts.anthropic} · openai 호환 ${counts.openai} · 미지원 ${counts.unsupported}`,
+    `  anthropic ${counts.anthropic} · openai 호환 ${counts.openai} · claudeCode ${counts.claudeCode} · 미지원 ${counts.unsupported}`,
 );

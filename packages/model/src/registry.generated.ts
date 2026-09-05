@@ -2,7 +2,7 @@
 //   bun run --filter '@ariadne/model' sync
 // 원본: https://models.dev/api.json (models.dev)
 //
-// 프로바이더 213개 · 모델 7560개 시점 스냅샷.
+// 프로바이더 214개 · 모델 7561개 시점 스냅샷.
 // 포맷 분포: anthropic 9 · openai 호환 190 · 미지원 14
 //
 // "프로바이더 200개 지원"의 실체가 이 표다 — 어댑터는 둘뿐이고, 나머지는 baseURL과 env 이름이다.
@@ -45,6 +45,7 @@ export const PROVIDERS: Record<string, ProviderEntry> = {
   "cerebras": { format: "openai", name: "Cerebras", api: "https://api.cerebras.ai/v1", env: ["CEREBRAS_API_KEY"] },
   "chutes": { format: "openai", name: "Chutes", api: "https://llm.chutes.ai/v1", env: ["CHUTES_API_KEY"] },
   "clarifai": { format: "openai", name: "Clarifai", api: "https://api.clarifai.com/v2/ext/openai/v1", env: ["CLARIFAI_PAT"] },
+  "claude-code": { format: "claudeCode", name: "Claude Code (로컬 CLI)", env: [] },
   "claudinio": { format: "openai", name: "Claudinio", api: "https://api.claudin.io/v1", env: ["CLAUDINIO_API_KEY"] },
   "cline-pass": { format: "openai", name: "ClinePass", api: "https://api.cline.bot/api/v1", env: ["CLINE_API_KEY"] },
   "cloudferro-sherlock": { format: "openai", name: "CloudFerro Sherlock", api: "https://api-sherlock.cloudferro.com/openai/v1/", env: ["CLOUDFERRO_SHERLOCK_API_KEY"] },
