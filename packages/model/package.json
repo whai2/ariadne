@@ -12,10 +12,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "example": "bun run examples/chat.ts"
+    "example": "bun run examples/chat.ts",
+    "sync": "bun run scripts/sync-providers.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
-    "@ariadne/core": "workspace:*"
+    "@ariadne/core": "workspace:*",
+    "openai": "^7.10.0"
   }
 }

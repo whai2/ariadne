@@ -1,9 +1,11 @@
 // Anthropic 어댑터 — 중립 `ChatModel`을 Claude Messages API 위에 구현한다.
 //
-// 이 파일이 **프로바이더를 아는 유일한 곳**이다. 하는 일은 두 방향의 번역뿐:
+// 하는 일은 두 방향의 번역뿐:
 //   core BaseMessage[]  →  Anthropic 와이어 포맷   (toAnthropicMessages)
 //   Anthropic Message   →  core AIMessage          (invoke 끝부분)
-// 두 번째 프로바이더가 생기면 이 파일과 같은 모양의 형제가 하나 더 생긴다.
+//
+// **Anthropic 전용이 아니라 "Anthropic 와이어 포맷" 어댑터다.** MiniMax·Kimi 등도
+// 같은 포맷의 엔드포인트를 내므로, `baseURL`만 바꾸면 그대로 쓰인다(→ registry.ts).
 
 import Anthropic from "@anthropic-ai/sdk";
 import { type AIMessage, ai, type BaseMessage } from "@ariadne/core";
@@ -29,6 +31,10 @@ export interface AnthropicChatConfig {
   model?: string;
   /** API 키. 생략하면 SDK가 환경(ANTHROPIC_API_KEY 등)에서 찾는다. */
   apiKey?: string;
+  /** 베이스 URL. 같은 포맷을 내는 다른 프로바이더(MiniMax·Kimi…)를 가리킬 때 쓴다. */
+  baseURL?: string;
+  /** 관찰용 라벨. 라우터가 실제 프로바이더 id를 넣어준다. */
+  provider?: string;
   /** 응답 최대 토큰 기본값. 호출마다 `ChatOptions.maxTokens`로 덮을 수 있다. */
   maxTokens?: number;
   /** 이 모델에 항상 붙는 시스템 지시. 호출별 system·system 메시지와 합쳐진다. */
@@ -88,12 +94,15 @@ export function anthropicChat(config: AnthropicChatConfig = {}): ChatModel {
   const create: CreateMessage =
     config.create ??
     ((body, options) => {
-      const client = new Anthropic(config.apiKey === undefined ? {} : { apiKey: config.apiKey });
+      const client = new Anthropic({
+        ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
+        ...(config.baseURL === undefined ? {} : { baseURL: config.baseURL }),
+      });
       return client.messages.create(body, options);
     });
 
   return {
-    provider: "anthropic",
+    provider: config.provider ?? "anthropic",
     modelId,
 
     async invoke(messages: BaseMessage[], options: ChatOptions = {}): Promise<AIMessage> {

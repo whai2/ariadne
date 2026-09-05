@@ -131,6 +131,21 @@ Core 트랙이 V8로 끝났다. 여기부터는 **엔진을 안 건드리고 그
 - **검증:** 순수 변환 단위 + 가짜 호출자로 어댑터 동작 + **그래프 통합**(누적·멀티턴 자기 루프) + 키 있을 때만 도는 실호출(없으면 skip → 오프라인에서도 `verify` 그린). ([노트 13](notes/13-f1-model.md))
 - **벽 → 다음:** `BaseMessage.content`가 **string**이라 `tool_use`/`tool_result`를 담을 수 없다. ReAct 예제의 툴 호출이 아직 문자열 규약(`"도구호출: calc"`)인 이유다.
 
+### F1.5 · 모델 라우터 — 프로바이더 190여 개 — [x] 완료
+- **도는 것:** `model("openrouter/anthropic/claude-sonnet-4.5")` — **문자열 하나로 어느 프로바이더든** 고른다. 그래프 코드는 안 바뀐다.
+- **핵심 발견:** "프로바이더 200개 지원"의 실체는 어댑터 200개가 아니라 **와이어 포맷 두 개 + 표**다. models.dev 레지스트리 213개를 분류하니 **190개가 OpenAI 호환**, 9개가 Anthropic 포맷이었다. 나머지 차이는 전부 `baseURL`과 환경변수 이름 — 즉 **데이터**다.
+- **내부:**
+  - `openaiCompatible()` 어댑터 하나가 OpenRouter·Groq·DeepSeek·xAI·Mistral·Together·Cohere·Ollama… 190개를 덮는다. **Gemini도 여기 들어간다** — 네이티브 포맷은 다르지만 구글이 OpenAI 호환 셰임 엔드포인트를 공식 제공한다. **baseURL이 프로바이더를 정한다.**
+  - `anthropicChat`에 `baseURL` 추가 → MiniMax·Kimi 등 Anthropic 포맷 프로바이더 9개가 공짜로 붙는다. 이 어댑터는 "Anthropic 전용"이 아니라 **"Anthropic 와이어 포맷" 어댑터**였음이 드러난다.
+  - `resolveSpec`(순수) — 첫 `/`까지가 프로바이더, **나머지 전부가 모델 ID**(게이트웨이는 모델 ID에 슬래시가 또 있다).
+  - `scripts/sync-providers.ts` → `src/registry.generated.ts`. **빌드타임 생성 + 커밋** — 런타임 네트워크 0, 오프라인에서도 `verify` 그린. (mastra는 런타임 fetch — 반대 트레이드오프를 골랐다.)
+- **새 개념:** `ProviderEntry`(format·api·env) · `UnknownProviderError` · `UnsupportedProviderError` · `MissingApiKeyError`(**어느 환경변수가 필요한지 이름을 말한다**).
+- **한 가지 함정:** models.dev의 `npm` 필드는 *와이어 포맷*이 아니라 Vercel AI SDK 패키지명이다. 그대로 믿으면 OpenRouter·Groq·xAI·Gemini가 미지원으로 떨어진다 → 각 프로바이더 문서를 확인해 오버라이드 표(12개)를 뒀다.
+- **잡은 버그:** models.dev는 워크스페이스별 URL을 `${VAR}` 템플릿으로 준다. 이걸 안 읽어 ① baseURL에 플레이스홀더가 남고 ② `env` 첫 값(=URL 조각)을 API 키로 집고 있었다 → `ProviderEntry.apiVars`로 **URL 조각과 키를 분리**. Databricks·Snowflake·Cloudflare·Neon·Infomaniak 5개가 실제로 부를 수 있게 됐다. (biome 경고를 "생성물이니 무시"로 처리했던 게 실은 이 버그를 가리키고 있었다.)
+- **안 한 것(정직):** Vertex·Bedrock·Azure(14개 미지원 — 전부 **인증 방식이 baseURL로 안 덮이는** 것들이다: AWS 서명 · GCP ADC), 스트리밍, 모델 ID 목록(7,560개는 아직 필요 없다 — 프로바이더 메타데이터만 생성).
+- **검증:** 순수 파싱 · 라우팅(네이티브/게이트웨이/Anthropic 포맷 타 프로바이더) · 키 없을 때 에러 메시지 · 레지스트리 불변식(포맷은 둘뿐) · OpenAI 어댑터 · 그래프 통합. 키 있을 때만 도는 실호출 2종. ([노트 14](notes/14-f1_5-model-router.md))
+- **벽 → 다음:** F1과 동일 — `BaseMessage.content`가 string이라 툴 호출을 못 담는다.
+
 ### F2 · 툴 링 — `@ariadne/tools` (예정)
 F1의 벽을 정면으로 받는다. **core의 메시지 타입 확장**(`content`를 블록 배열로, tool 역할 추가)이 선행되고, 그 위에 툴 정의/실행. ReAct 예제가 문자열 규약 없이 진짜로 돈다.
 
