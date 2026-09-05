@@ -18,8 +18,8 @@ g.addConditionalEdges(START, (s) => s.items.map((i) => new Send("square", i)));
 
 ## 내부 구현
 - [`send.ts`](../../packages/core/src/send.ts): `Send { node, arg }`.
-- [`types.ts`](../../packages/core/src/types.ts): `RouteTarget = string | Send`. Router 반환에 Send 허용.
-- [`pregel.ts`](../../packages/core/src/pregel.ts):
+- [`graph/types.ts`](../../packages/core/src/graph/types.ts): `RouteTarget = string | Send`. Router 반환에 Send 허용.
+- [`pregel/algo.ts`](../../packages/core/src/pregel/algo.ts):
   - `nextTargets` → **`nextTasks`**: 정적 엣지·라우터 노드명 → PULL, Send → PUSH. `Task[]` 반환.
   - `active`: `Set<string>` → **`Task[]`**. 실행 시 `node(task.arg ? payload : snapshot)`.
   - `dedupePullTasks`: PULL은 노드별 1개(팬인), **PUSH는 모두 유지**(payload가 다르니 별개 실행).
@@ -47,4 +47,4 @@ V6:  active = Task[]  (PULL | PUSH) → 노드 + (PUSH면 payload)
 
 ## 참조
 - langgraph: `types.py`(Send·PregelExecutableTask), `pregel/_algo.py`(prepare_next_tasks의 PUSH/PULL), `channels/topic.py`(TASKS 백킹).
-- 우리: [`send.ts`](../../packages/core/src/send.ts), [`pregel.ts`](../../packages/core/src/pregel.ts)(nextTasks/Task/dedupePullTasks), [`08-control-flow-taxonomy.md`](08-control-flow-taxonomy.md).
+- 우리: [`send.ts`](../../packages/core/src/send.ts), [`pregel/algo.ts`](../../packages/core/src/pregel/algo.ts)(nextTasks/Task/dedupePullTasks), [`08-control-flow-taxonomy.md`](08-control-flow-taxonomy.md).

@@ -6,8 +6,8 @@
 - 정적 엣지와 **공존**(같은 source에 둘 다 걸면 합집합). START에도 걸어 **조건부 진입** 가능.
 
 ## 내부 구현
-- 빌더: `branches = Map<source, Router[]>` 추가([stateGraph.ts](../../packages/core/src/stateGraph.ts)). compile이 이걸 `CompiledGraph`로 넘긴다.
-- 실행: 순수 헬퍼 [`nextTargets(source, state)`](../../packages/core/src/pregel.ts) = **정적 엣지 ∪ 라우터 결과**(END 제외). 라우터가 모르는 노드를 반환하면 즉시 에러.
+- 빌더: `branches = Map<source, Router[]>` 추가([stateGraph.ts](../../packages/core/src/graph/stateGraph.ts)). compile이 이걸 `CompiledGraph`로 넘긴다.
+- 실행: 순수 헬퍼 [`nextTargets(source, state)`](../../packages/core/src/pregel/algo.ts) = **정적 엣지 ∪ 라우터 결과**(END 제외). 라우터가 모르는 노드를 반환하면 즉시 에러.
 - `stream` 루프에서 **초기 활성**과 **다음 활성**을 모두 `nextTargets`로 계산하도록 통일. 라우터는 그 스텝 쓰기가 반영된 **직후 상태(`stateNow`)**를 보고 결정한다(superstep 경계에서 실행).
 
 ```
@@ -35,4 +35,4 @@ V5:  다음 활성 = 실행 노드들의 (정적 아웃엣지 ∪ router(stateNo
 
 ## 참조
 - langgraph: `graph/_branch.py`(Branch), `graph/state.py:982`(add_conditional_edges).
-- 우리: [`stateGraph.ts`](../../packages/core/src/stateGraph.ts), [`pregel.ts`](../../packages/core/src/pregel.ts), [`types.ts`](../../packages/core/src/types.ts)(Router).
+- 우리: [`graph/stateGraph.ts`](../../packages/core/src/graph/stateGraph.ts), [`pregel/algo.ts`](../../packages/core/src/pregel/algo.ts), [`graph/types.ts`](../../packages/core/src/graph/types.ts)(Router).

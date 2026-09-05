@@ -14,7 +14,7 @@ V7:  누구든 채널에 쓴다 → 그 채널을 구독한 정점이 깨어난�
 
 ## 제어 흐름 네 종류가 한 연산으로 수렴
 
-전부 [`controlWrites`](../../packages/core/src/stateGraph.ts) 한 함수로 낮춰진다.
+전부 [`controlWrites`](../../packages/core/src/graph/stateGraph.ts) 한 함수로 낮춰진다.
 
 | 선언 | 낮춘 결과 |
 |---|---|
@@ -38,7 +38,7 @@ V7:  누구든 채널에 쓴다 → 그 채널을 구독한 정점이 깨어난�
 | [`Topic`](../../packages/core/src/channels/topic.ts) | 값이 하나라도 있으면 | 다음 스텝 경계에 자동 만료 | `TASKS`(Send 대기열) |
 
 만료 메커니즘이 재밌다. `update([])`가 **"이번 스텝엔 아무도 안 썼다"는 통지**로 재정의됐다
-([`expireStale`](../../packages/core/src/pregel.ts)). 상태 채널엔 no-op이고, 수명 1스텝인 채널만
+([`expireStale`](../../packages/core/src/pregel/algo.ts)). 상태 채널엔 no-op이고, 수명 1스텝인 채널만
 스스로 비운다. 즉 **"트리거는 한 번만 발화한다"가 스케줄러 코드가 아니라 채널 정의에서 나온다.**
 
 ## 사라진 코드가 얻은 것
@@ -64,7 +64,7 @@ b의 라우터가 보는 log:  ["a", "b"]      ← 자기 쓰기는 보임
                        ["a","b","c"] ✗  ← 같은 스텝 c의 쓰기는 안 보임(BSP)
 ```
 
-구현은 [`localRead`](../../packages/core/src/pregel.ts) — 채널을 `copy()`해 자기 쓰기만 얹고 읽은 뒤 버린다.
+구현은 [`localRead`](../../packages/core/src/pregel/algo.ts) — 채널을 `copy()`해 자기 쓰기만 얹고 읽은 뒤 버린다.
 이걸 위해 `BaseChannel`에 `copy()`와 `consume()`이 생겼다.
 
 라우터의 **위치**도 바뀌었다: "barrier 뒤에 도는 플래너"에서 **"노드 자신의 writer"**로.
@@ -75,13 +75,33 @@ b의 라우터가 보는 log:  ["a", "b"]      ← 자기 쓰기는 보임
 ```ts
 interface PregelNode<S> {
   triggers: string[];   // 이 채널에 값이 있으면 나는 깨어난다  ← 정점의 inbox
-  bound: NodeFn<S, never>;
+  bound: BoundFn;       // (input: never) => unknown — 엔진은 반환값을 해석하지 않는다
   writers: Writer<S>[]; // bound 뒤에 도는 쓰기들 (상태 → 엣지 → join → 라우터 순)
 }
 ```
 
 노드는 여전히 채널 이름을 모른다(불변식 1). "부분 상태를 반환"할 뿐이고, 그걸 **어느 채널에
 어떻게 흘릴지는 전부 writer가 안다.** 엣지를 하나 더 거는 것 = writer를 하나 더 붙이는 것.
+
+## 폴더가 갈라졌다 (구조로 증명되는 불변식 3)
+
+V7에서 "엔진 ↔ 사용자 API"의 경계가 코드로 뚜렷해져서, `src/`를 세 층으로 나눴다.
+
+```
+공용 어휘   constants · errors · send · channels/    ← 위를 모른다
+   ↑
+pregel/     algo · loop · node · types               ← graph/를 모른다
+   ↑
+graph/      stateGraph · command · types             ← compile()이 PregelSpec으로 낮춰 넘긴다
+```
+
+접점은 [`PregelSpec`](../../packages/core/src/pregel/types.ts) 하나뿐이다. 이걸 지키려고
+`PregelNode.bound`의 반환 타입을 `unknown`으로 낮췄다 — 엔진이 `Command`를 알 필요가 없어지고,
+"부분 상태냐 Command냐"는 graph/의 writer만 판별한다.
+
+화살표가 한 방향이라 **"StateGraph는 순수 sugar"가 구조로 증명된다**: 엔진이 StateGraph를 못 보므로,
+엔진만 남기고 다른 빌더를 얹어도 그대로 돈다. 이 경계는 주석이 아니라
+[`architecture.test.ts`](../../packages/core/test/architecture.test.ts)가 지킨다(import를 스캔해 위반 시 실패).
 
 ## 08 분류 지도에서 켠 칸
 
@@ -126,6 +146,6 @@ interface PregelNode<S> {
   `channels/ephemeral_value.py`, `channels/named_barrier_value.py`, `channels/topic.py`,
   `graph/state.py:1509,1531,1551,1760`(attach_node/attach_edge/attach_branch/_control_branch),
   `types.py`(Command).
-- 우리: [`pregel.ts`](../../packages/core/src/pregel.ts), [`pregelNode.ts`](../../packages/core/src/pregelNode.ts),
-  [`command.ts`](../../packages/core/src/command.ts), [`stateGraph.ts`](../../packages/core/src/stateGraph.ts),
+- 우리: [`pregel/`](../../packages/core/src/pregel/)(algo·loop·node·types),
+  [`graph/`](../../packages/core/src/graph/)(stateGraph·command·types),
   [`08-control-flow-taxonomy.md`](08-control-flow-taxonomy.md).

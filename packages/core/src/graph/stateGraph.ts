@@ -1,15 +1,20 @@
-import type { BaseChannel } from "./channels/base";
-import { BinaryOperatorAggregate } from "./channels/binop";
-import { EphemeralValue } from "./channels/ephemeralValue";
-import { LastValue } from "./channels/lastValue";
-import { NamedBarrierValue } from "./channels/namedBarrier";
-import { Topic } from "./channels/topic";
+import type { BaseChannel } from "../channels/base";
+import { BinaryOperatorAggregate } from "../channels/binop";
+import { EphemeralValue } from "../channels/ephemeralValue";
+import { LastValue } from "../channels/lastValue";
+import { NamedBarrierValue } from "../channels/namedBarrier";
+import { Topic } from "../channels/topic";
+import { branchTo, END, joinTo, START, TASKS } from "../constants";
+import {
+  type ChannelWriteEntry,
+  CompiledGraph,
+  type PregelNode,
+  type PregelSpec,
+  type Writer,
+} from "../pregel";
+import { Send } from "../send";
 import { Command } from "./command";
-import { branchTo, END, joinTo, START, TASKS } from "./constants";
-import { CompiledGraph, type PregelSpec } from "./pregel";
-import type { ChannelWriteEntry, PregelNode, Writer } from "./pregelNode";
-import { Send } from "./send";
-import type { ChannelSpec, NodeFn, NodeReturn, Router, RouteTarget, StateSchema } from "./types";
+import type { ChannelSpec, NodeFn, Router, RouteTarget, StateSchema } from "./types";
 
 /** 스펙 하나를 상태 채널로 만든다. reducer가 있으면 BinaryOperatorAggregate, 없으면 LastValue. */
 function makeStateChannel(spec: ChannelSpec<unknown> | undefined): BaseChannel {
@@ -19,10 +24,13 @@ function makeStateChannel(spec: ChannelSpec<unknown> | undefined): BaseChannel {
   return new LastValue();
 }
 
-/** 부분 상태 → 상태 채널 쓰기. `Command`면 그 안의 update만 꺼낸다. */
-function updateWrites<S extends object>(output: NodeReturn<S>): ChannelWriteEntry[] {
+/**
+ * 노드 출력 → 상태 채널 쓰기. `Command`면 그 안의 update만 꺼낸다.
+ * 엔진은 출력을 `unknown`으로 넘긴다 — **"부분 상태냐 Command냐"를 아는 건 여기뿐**이다.
+ */
+function updateWrites(output: unknown): ChannelWriteEntry[] {
   const update = output instanceof Command ? output.update : output;
-  return Object.entries(update ?? {}).map(([channel, value]) => ({ channel, value }));
+  return Object.entries((update ?? {}) as object).map(([channel, value]) => ({ channel, value }));
 }
 
 /**
@@ -258,6 +266,6 @@ export class StateGraph<S extends object> {
 }
 
 /** `Command`가 아니면 행선지가 없다(제어 흐름은 엣지가 담당). */
-function commandGoto<S extends object>(output: NodeReturn<S>): readonly RouteTarget[] {
+function commandGoto(output: unknown): readonly RouteTarget[] {
   return output instanceof Command ? output.goto : [];
 }

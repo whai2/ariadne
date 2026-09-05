@@ -27,6 +27,7 @@ LangGraph를 TypeScript로 **바닥부터 재구현**하며 내부 구조를 학
 1. **채널이 유일한 공유 가변 상태.** 쓰기는 버퍼링됐다 superstep 경계에서 `applyWrites`로만 반영. (V4에서 도달)
 2. **superstep = Plan → Execute → Update.** step N의 쓰기는 step N+1에서만 보임(BSP). (V4)
 3. **StateGraph는 순수 sugar** — `compile()`이 Pregel로 낮춤(노드→`PregelNode`, 엣지·라우터·`Command`→채널 쓰기). (V7에서 도달)
+4. **폴더 경계는 한 방향** — `공용 어휘 ← pregel/(엔진) ← graph/(사용자 API)`. 엔진은 StateGraph를 모르고 접점은 `PregelSpec` 하나. (V7에서 도달, `test/architecture.test.ts`가 강제)
 
 ---
 

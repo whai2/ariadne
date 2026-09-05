@@ -33,6 +33,7 @@
 1. **채널이 유일한 공유 가변 상태.** 노드는 채널을 직접 만지지 않고, 쓰기는 버퍼링됐다 superstep 경계에서 `applyWrites`로만 반영된다.
 2. **superstep = Plan → Execute → Update.** (step N의 쓰기는 step N+1에서만 보임 — BSP)
 3. **StateGraph는 순수 sugar** — `compile()`이 노드→`PregelNode`, 엣지→트리거 채널로 낮춰 결국 `Pregel`이 된다.
+4. **폴더 경계는 한 방향.** `공용 어휘(constants·errors·send·channels/) ← pregel/(엔진) ← graph/(사용자 API)`. **`pregel/`은 `graph/`를 import하지 않는다** — 엔진은 StateGraph도 Command도 모르고, 접점은 `PregelSpec` 하나뿐이다. `graph/`는 `../pregel` 배럴만 쓴다(내부 파일 직접 import 금지). `test/architecture.test.ts`가 강제한다.
 
 ## 하네스 (Bun 생태계)
 

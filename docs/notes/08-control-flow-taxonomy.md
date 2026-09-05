@@ -62,13 +62,13 @@ Vn 단계 노트가 아니라 **개념 지도**다. "우리 그래프 엔진에�
 두 축은 "흐름(routing+merge)"은 빈틈없이 덮지만, 넓히면 세 종류의 누락이 있다.
 
 ### A. 두 축 **안**의 숨은 서브차원
-- **순서 의존(교환법칙):** 비가환 리듀서(리스트 concat 등)는 **fold 순서가 결과를 바꾼다**. → [`pregel.ts`의 `names.sort()`](../../packages/core/src/pregel.ts)로 순서 고정. ⇒ 합치기 = [어떻게] × [순서].
+- **순서 의존(교환법칙):** 비가환 리듀서(리스트 concat 등)는 **fold 순서가 결과를 바꾼다**. → [`prepareNextTasks`의 이름 정렬](../../packages/core/src/pregel/algo.ts)로 순서 고정. ⇒ 합치기 = [어떻게] × [순서].
 - **수명(persist vs ephemeral):** {덮어쓰기, 리듀서}는 둘 다 "유지". **한 스텝만 살고 사라지는** 채널(`EphemeralValue`, 트리거/신호용)이 빠짐. ⇒ 합치기 = [어떻게] × [순서] × [수명]. ✅ **V7** (`EphemeralValue`/`Topic` — `update([])`가 "새 스텝 통지"로 만료시킨다)
 - **대기는 2값이 아님:** 즉시(first) / K-of-N(정족수) / named-all. 개별 엣지는 첫째, `NamedBarrierValue`(다중소스 엣지)는 셋째 ✅ **V7**. K-of-N은 아직 없다.
 
 ### B. 두 축 **밖**의 방향 (카테고리 자체 누락)
 - **종료:** "어디로 보내나" 말고 **"언제 멈추나"**. 정상 종료(활성 소진·`→END`) / 스텝 한도(`limit=100`) / **조건부 조기 종료**(V5 필요). ← 제3의 제어 질문.
-- **읽기:** 데이터 흐름의 세 번째 방향. 값 읽기는 여전히 [전체 스냅샷](../../packages/core/src/pregel.ts)이지만, **깨어남**은 V7부터 구독이다(`PregelNode.triggers`) — 축의 절반이 열렸다. ⇒ 데이터 흐름 = 읽기/쓰기/병합.
+- **읽기:** 데이터 흐름의 세 번째 방향. 값 읽기는 여전히 [전체 스냅샷](../../packages/core/src/pregel/algo.ts)이지만, **깨어남**은 V7부터 구독이다(`PregelNode.triggers`) — 축의 절반이 열렸다. ⇒ 데이터 흐름 = 읽기/쓰기/병합.
 - **엣지가 데이터를 싣나:** 우리는 엣지=제어만, 데이터=공유 채널. `Send(node, payload)`는 페이로드 동반(메시지 패싱). `Command(goto+update)`는 나가기+상태를 노드 안에서 합침. (V6/V7)
 - **합성(subgraph):** 노드가 통째로 하위 그래프. 완전히 빠짐.
 
@@ -138,4 +138,4 @@ V7 시점 — **두 축의 칸은 전부 켜졌다**(V5 선택, V6 동적, V7 �
 
 ## 참조
 - langgraph: `pregel/_read.py`(PregelNode·ChannelRead), `pregel/_write.py`(ChannelWrite), `graph/state.py`(attach_edge/attach_branch), `channels/{ephemeral_value,named_barrier_value,topic}.py`.
-- 우리: [`pregel.ts`](../../packages/core/src/pregel.ts), [`stateGraph.ts`](../../packages/core/src/stateGraph.ts), [`07-v4-superstep.md`](07-v4-superstep.md).
+- 우리: [`pregel/algo.ts`](../../packages/core/src/pregel/algo.ts), [`graph/stateGraph.ts`](../../packages/core/src/graph/stateGraph.ts), [`07-v4-superstep.md`](07-v4-superstep.md).
