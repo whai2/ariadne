@@ -141,6 +141,30 @@ describe("model() — 문자열 하나로 어느 프로바이더든", () => {
   });
 });
 
+describe("SDK 자격증명 해석 — 키가 없어도 되는 경우", () => {
+  test("본가는 키 없이도 만들어진다 (SDK가 OAuth 프로필 등을 찾는다)", () => {
+    // ANTHROPIC_API_KEY는 SDK가 보는 여러 경로 중 하나일 뿐이다.
+    // 우리가 "키 없음"으로 단정하고 던지면 ant auth login 프로필을 통째로 막게 된다.
+    expect(model("anthropic/claude-opus-5", { env: {} }).provider).toBe("anthropic");
+    expect(model("openai/gpt-5.5", { env: {} }).provider).toBe("openai");
+  });
+
+  test("**본가가 아니면** 여전히 즉시 실패한다", () => {
+    // Groq의 자격증명은 어느 SDK도 모른다 — 조용히 넘기면 엉뚱한 키가 실려 나간다.
+    expect(() => model("groq/llama-3.3-70b", { env: {} })).toThrow(MissingApiKeyError);
+    expect(() => model("openrouter/x", { env: {} })).toThrow(MissingApiKeyError);
+  });
+
+  test("baseURL을 남의 것으로 돌리면 면제가 사라진다", () => {
+    // Anthropic SDK를 MiniMax로 겨눠놓고 SDK의 자격증명 해석을 기대하면 안 된다.
+    expect(() =>
+      model("anthropic/claude-opus-5", { env: {}, baseURL: "https://api.minimax.io/anthropic" }),
+    ).toThrow(MissingApiKeyError);
+    // 레지스트리에 api가 박힌 프로바이더도 마찬가지(본가가 아니다).
+    expect(() => model("minimax/MiniMax-M2", { env: {} })).toThrow(MissingApiKeyError);
+  });
+});
+
 describe("adapterBaseURL — 두 SDK의 baseURL 규약이 정반대다", () => {
   test("Anthropic SDK는 /v1을 스스로 붙인다 → 레지스트리 값에서 떼야 한다", () => {
     // 안 떼면 POST .../anthropic/v1/v1/messages 가 된다(실제로 있었던 버그).

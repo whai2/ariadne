@@ -146,6 +146,18 @@ Core 트랙이 V8로 끝났다. 여기부터는 **엔진을 안 건드리고 그
 - **검증:** 순수 파싱 · 라우팅(네이티브/게이트웨이/Anthropic 포맷 타 프로바이더) · 키 없을 때 에러 메시지 · 레지스트리 불변식(포맷은 둘뿐) · OpenAI 어댑터 · 그래프 통합. 키 있을 때만 도는 실호출 2종. ([노트 14](notes/14-f1_5-model-router.md))
 - **벽 → 다음:** F1과 동일 — `BaseMessage.content`가 string이라 툴 호출을 못 담는다.
 
+### F1.6 · 인증 계층 (진행 중)
+API 키 하나로 표현되지 않는 자격증명을 다룬다. `ProviderEntry`가 "키 + baseURL"까지만 알아서 생긴 구멍이다.
+
+- [x] **SDK 자격증명 해석 허용.** `model()`이 env에 키가 없으면 **SDK를 부르기도 전에** 던지고 있었다. 그런데 Anthropic SDK는 `ANTHROPIC_API_KEY` → `ANTHROPIC_AUTH_TOKEN` → `ant auth login` **OAuth 프로필** → WIF 순으로 스스로 찾는다 — 레지스트리가 아는 환경변수는 그중 **하나일 뿐**이었다. 우리가 SDK보다 엄격해서 나머지 경로를 막고 있었던 셈. `SDK_RESOLVES_CREDENTIALS`(본가 + baseURL 미지정)면 판단을 SDK에 넘긴다. 대가: 정말 자격증명이 없으면 생성 시점이 아니라 **첫 호출**에서 터진다.
+- [ ] **Azure** — URL이 `{resource}/deployments/{deployment}?api-version=` 구조. 이미 쓰는 `openai` SDK의 `AzureOpenAI` 클래스로 가능(새 의존성 0).
+- [ ] **Bedrock** — AWS SigV4 서명. 공식 `@anthropic-ai/bedrock-sdk`.
+- [ ] **Vertex** — GCP ADC. 공식 `@anthropic-ai/vertex-sdk`.
+
+셋을 붙이면 **204/213**. 남는 건 watsonx·SAP·Cloudflare Gateway 같은 엔터프라이즈 케이스.
+
+> **정액제 플랜은 이미 다 된다.** Alibaba·Tencent·MiniMax·Kimi·Xiaomi·StepFun 등의 coding/token plan 20개는 **API 키를 주는 구독**이라 F1.5 구조에 그대로 맞는다(`model("minimax-coding-plan/MiniMax-M2")`). 인증 계층이 필요한 건 키가 아닌 자격증명을 쓰는 쪽이다.
+
 ### F2 · 툴 링 — `@ariadne/tools` (예정)
 F1의 벽을 정면으로 받는다. **core의 메시지 타입 확장**(`content`를 블록 배열로, tool 역할 추가)이 선행되고, 그 위에 툴 정의/실행. ReAct 예제가 문자열 규약 없이 진짜로 돈다.
 

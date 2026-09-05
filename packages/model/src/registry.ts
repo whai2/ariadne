@@ -115,6 +115,19 @@ export function adapterBaseURL(
   return format === "anthropic" ? raw.replace(/\/v1\/?$/, "") : raw;
 }
 
+/**
+ * **키를 안 줘도 되는 프로바이더.** 우리가 쓰는 SDK가 스스로 자격증명을 찾기 때문이다.
+ *
+ * Anthropic SDK의 해석 순서: `ANTHROPIC_API_KEY` → `ANTHROPIC_AUTH_TOKEN` →
+ * `ant auth login`이 심어둔 **OAuth 프로필** → Workload Identity Federation.
+ * 즉 레지스트리가 아는 `ANTHROPIC_API_KEY`는 그 여러 경로 중 **하나일 뿐**이다.
+ * 우리가 "키 없음"으로 단정하고 던지면 나머지 경로를 통째로 막게 된다.
+ *
+ * **본가일 때만 성립한다.** baseURL을 MiniMax로 돌려놓고 SDK의 자격증명 해석을 기대하면
+ * 엉뚱한 키가 실려 나간다 — 그래서 아래에서 `baseURL === undefined`를 같이 본다.
+ */
+const SDK_RESOLVES_CREDENTIALS = new Set(["anthropic", "openai"]);
+
 export interface ModelConfig {
   /** 직접 주는 API 키. 없으면 레지스트리가 지정한 환경변수에서 찾는다. */
   apiKey?: string;
@@ -134,25 +147,34 @@ export interface ModelConfig {
  * g.addNode("model", async (s) => ({ messages: [await m.invoke(s.messages)] }));
  * ```
  *
- * 키가 없으면 **어느 환경변수가 필요한지 이름을 말해주며** 즉시 실패한다.
+ * 키가 없으면 **어느 환경변수가 필요한지 이름을 말해주며** 즉시 실패한다 —
+ * 단 SDK가 스스로 자격증명을 찾을 수 있는 본가 프로바이더는 예외다
+ * (→ `SDK_RESOLVES_CREDENTIALS`). 그 경우 판단을 SDK에 넘긴다.
  */
 export function model(spec: string, config: ModelConfig = {}): ChatModel {
   const { provider, modelId, entry } = resolveSpec(spec);
   const env = config.env ?? process.env;
   const apiVars = entry.apiVars ?? [];
 
+  const baseURL = adapterBaseURL(entry.format, resolveApi(provider, entry, apiVars, env), config);
+
   // URL 조각으로 쓰이는 환경변수는 **키 후보가 아니다.** 이걸 안 빼면
   // Databricks에서 `DATABRICKS_HOST`(URL)를 API 키로 집는다.
   const keyNames = entry.env.filter((name) => !apiVars.includes(name));
   const apiKey = config.apiKey ?? keyNames.map((name) => env[name]).find((v) => v);
+
   if (apiKey === undefined || apiKey === "") {
-    throw new MissingApiKeyError(provider, keyNames.length > 0 ? keyNames : entry.env);
+    // 본가 + baseURL 미지정이면 SDK에 맡긴다(OAuth 프로필·AUTH_TOKEN·WIF 등).
+    // **대가는 있다**: 정말 아무 자격증명도 없으면 여기가 아니라 첫 호출에서 터진다.
+    if (!(SDK_RESOLVES_CREDENTIALS.has(provider) && baseURL === undefined)) {
+      throw new MissingApiKeyError(provider, keyNames.length > 0 ? keyNames : entry.env);
+    }
   }
 
-  const baseURL = adapterBaseURL(entry.format, resolveApi(provider, entry, apiVars, env), config);
   const shared = {
     model: modelId,
-    apiKey,
+    // apiKey를 **넘기지 않는 것**과 빈 값을 넘기는 건 다르다 — 안 넘겨야 SDK가 찾는다.
+    ...(apiKey === undefined || apiKey === "" ? {} : { apiKey }),
     ...(baseURL === undefined ? {} : { baseURL }),
     ...(config.maxTokens === undefined ? {} : { maxTokens: config.maxTokens }),
     ...(config.system === undefined ? {} : { system: config.system }),
