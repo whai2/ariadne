@@ -1,0 +1,21 @@
+{
+  "name": "@ariadne/model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ariadne 모델 링 — 프로바이더 중립 ChatModel 인터페이스 + 어댑터",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "example": "bun run examples/chat.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "@ariadne/core": "workspace:*"
+  }
+}

@@ -9,7 +9,7 @@ LangGraph를 TypeScript로 **바닥부터 재구현**하며 내부 구조를 학
 
 참조 원본(Python): `/Users/no-eunsu/coxwave/langgraph/libs/langgraph/langgraph/` — 읽기 전용 참고, **복붙 금지**.
 
-> **이 문서는 Core 트랙이다.** 프로젝트는 모노레포이며, 이 로드맵(V1~V8)은 `packages/core`(`@ariadne/core`) 그래프 엔진을 다룬다. 전체 비전(올인원 프레임워크 · Studio · 3 트랙)은 [VISION.md](VISION.md) 참조. **지금 집중 = Core 트랙.**
+> **이 문서는 진행 계획의 원본이다.** 프로젝트는 모노레포이며, `V1~V8`은 `packages/core`(`@ariadne/core`) 그래프 엔진(**완료**), `F1~`은 그 위의 프레임워크 링을 다룬다. 전체 비전(올인원 프레임워크 · Studio · 3 트랙)은 [VISION.md](VISION.md) 참조. **지금 집중 = Framework 트랙.**
 
 ## 이 방식의 규칙
 
@@ -114,6 +114,31 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.
+
+---
+
+## Framework 트랙 (V8 이후 — core 위에 얹는 링)
+
+Core 트랙이 V8로 끝났다. 여기부터는 **엔진을 안 건드리고 그 위에 링을 두른다.** 순서는 [VISION.md](VISION.md)의 `model → tools → agent → memory`이고, 규칙은 Core 트랙과 같다 — 한 커밋 = 한 단계, 매 단계가 돌아간다, 벽이 부를 때 도입.
+
+**링의 경계:** `@ariadne/core`는 **런타임 deps 0을 계속 유지**한다. LLM/서드파티 SDK는 링에만 산다(VISION). 엔진은 링을 모르고, 링은 core의 공개 API만 쓴다.
+
+### F1 · 모델 링 — ChatModel + Anthropic 어댑터 — [x] 완료
+- **도는 것:** 챗봇 그래프의 `model` 노드가 **진짜 Claude를 부른다.** V8 캡스톤에서 가짜 함수였던 자리가 그대로 교체된다 — **그래프 구조는 한 글자도 안 바뀐다.**
+- **내부:** `packages/model`(`@ariadne/model`). 프로바이더 중립 `ChatModel { provider, modelId, invoke(messages, options) → AIMessage }` + `anthropicChat()` 어댑터. 번역이 필요한 지점은 정확히 둘 — **역할 이름**(human→user, ai→assistant)과 **system의 위치**(core는 대화 리스트 안, Anthropic은 분리된 최상위 파라미터). 응답 id를 `AIMessage`에 실어 V8 `addMessages`의 교체 의미와 맞물린다.
+- **새 개념:** `ChatOptions`(프로바이더 공통으로 의미가 통하는 것만), `CreateMessage`(호출 함수 주입점 — 테스트가 캐스팅 없이 가짜를 꽂는다), `EmptyConversationError`, `ModelRefusalError`(**거절은 HTTP 200이라 SDK가 안 던진다**).
+- **안 한 것(정직):** 스트리밍, 툴 호출(F2), 레지스트리/라우팅(프로바이더가 **하나뿐**이라 미리 만들지 않는다 — 둘째가 생길 때 추출), `temperature`(현행 Claude가 400으로 거부 → 중립 어휘에 들어올 자격이 없다).
+- **검증:** 순수 변환 단위 + 가짜 호출자로 어댑터 동작 + **그래프 통합**(누적·멀티턴 자기 루프) + 키 있을 때만 도는 실호출(없으면 skip → 오프라인에서도 `verify` 그린). ([노트 13](notes/13-f1-model.md))
+- **벽 → 다음:** `BaseMessage.content`가 **string**이라 `tool_use`/`tool_result`를 담을 수 없다. ReAct 예제의 툴 호출이 아직 문자열 규약(`"도구호출: calc"`)인 이유다.
+
+### F2 · 툴 링 — `@ariadne/tools` (예정)
+F1의 벽을 정면으로 받는다. **core의 메시지 타입 확장**(`content`를 블록 배열로, tool 역할 추가)이 선행되고, 그 위에 툴 정의/실행. ReAct 예제가 문자열 규약 없이 진짜로 돈다.
+
+### F3 · 에이전트 링 — `@ariadne/agent` (예정)
+model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸 보이는 단계 — 새 실행 개념 없이 StateGraph 조립으로 끝나야 한다.
+
+### F4 · 메모리 링 — `@ariadne/memory` (예정)
+대화 히스토리 + RAG. 영속성(checkpointer)은 core의 범위 밖이었으므로 여기서 처음 부딪힌다.
 
 ## 진행 방식
 - **V0 → V1 → …** 순서로 한 단계씩. 각 단계에서 구현 + `bun:test` + `docs/notes/NN-*.md` 분석 노트까지 완주하고 커밋 후 멈춘다.
