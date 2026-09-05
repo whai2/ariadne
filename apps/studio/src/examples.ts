@@ -11,6 +11,7 @@ import {
   type StateSchema,
   system,
 } from "@ariadne/core";
+import { model } from "@ariadne/model";
 
 /** 스튜디오가 고를 수 있는 예제 하나. 타입은 지우고(런타임 데모) 이름/설명/샘플입력을 곁들인다. */
 export interface Example {
@@ -18,25 +19,44 @@ export interface Example {
   name: string;
   description: string;
   sampleInput: Record<string, unknown>;
-  graph: CompiledGraph<Record<string, unknown>>;
+  /**
+   * 그래프를 만든다. **지연 생성이다.**
+   *
+   * 진짜 모델을 쓰는 예제는 `model()`이 자격증명을 못 찾으면 던지는데, 그게 import 시점에
+   * 터지면 **스튜디오 전체가 안 뜬다**. 그래서 고를 때까지 안 만든다.
+   * `spec`은 live 예제에서만 의미가 있다(`"claude-code/sonnet"` 같은 모델 지정).
+   */
+  build: (spec?: string) => CompiledGraph<Record<string, unknown>>;
+  /** 진짜 모델을 부르는가. UI가 배지를 띄우고 "몇 초 걸린다"고 알린다. */
+  live?: boolean;
 }
 
 /** 타입 있는 그래프를 만들어 Example로 담는다(타입은 경계에서 지운다). */
 function example<S extends object>(
-  meta: { id: string; name: string; description: string; sampleInput: S },
-  build: (g: StateGraph<S>) => void,
+  meta: { id: string; name: string; description: string; sampleInput: S; live?: boolean },
+  build: (g: StateGraph<S>, spec: string) => void,
   schema?: StateSchema<S>,
 ): Example {
-  const g = new StateGraph<S>(schema);
-  build(g);
   return {
     id: meta.id,
     name: meta.name,
     description: meta.description,
     sampleInput: meta.sampleInput as unknown as Record<string, unknown>,
-    graph: g.compile() as unknown as CompiledGraph<Record<string, unknown>>,
+    ...(meta.live === undefined ? {} : { live: meta.live }),
+    build: (spec = DEFAULT_SPEC) => {
+      const g = new StateGraph<S>(schema);
+      build(g, spec);
+      return g.compile() as unknown as CompiledGraph<Record<string, unknown>>;
+    },
   };
 }
+
+/**
+ * live 예제의 기본 모델. **Claude Code를 고른 건 의도적이다** — API 키가 없어도
+ * (로그인만 돼 있으면) 돌기 때문에, 스튜디오를 열자마자 진짜 모델을 볼 수 있다.
+ * UI에서 `"groq/llama-3.3-70b"` 같은 다른 스펙으로 바꿀 수 있다.
+ */
+const DEFAULT_SPEC = "claude-code/sonnet";
 
 type Msg = { role: string; content: string };
 
@@ -284,5 +304,48 @@ export const examples: Example[] = [
       g.addEdge("generate", END);
     },
     { summaries: { reducer: (a, b) => [...a, ...b] } },
+  ),
+
+  // ─── 여기부터는 **진짜 모델을 부른다** ────────────────────────────────────────
+  // 위 예제들과 그래프 구조가 다르지 않다는 게 요점이다. 노드 안에서 가짜 함수 대신
+  // model().invoke를 부를 뿐, 엣지·스키마·스텝 관찰은 전부 그대로다.
+
+  example<MessagesState>(
+    {
+      id: "live-chat",
+      name: "🔴 실제 모델 — 한 턴",
+      description:
+        "START→model→END. **진짜 모델이 답한다.** 기본은 claude-code/sonnet(API 키 불필요, Claude Code 로그인만 있으면 됨). 위 'reduce' 예제와 그래프가 똑같다 — 노드 안이 가짜 함수에서 model().invoke로 바뀐 것뿐이다. 응답까지 몇 초 걸린다.",
+      sampleInput: { messages: [human("슈퍼스텝(BSP)이 뭔지 두 문장으로 설명해줘.")] },
+      live: true,
+    },
+    (g, spec) => {
+      const m = model(spec, { system: "간결하게 한국어로 답한다.", maxTokens: 1024 });
+      g.addNode("model", async (s) => ({ messages: [await m.invoke(s.messages)] }));
+      g.addEdge(START, "model");
+      g.addEdge("model", END);
+    },
+    messagesSchema,
+  ),
+
+  example<MessagesState & { turns: number }>(
+    {
+      id: "live-loop",
+      name: "🔴 실제 모델 — 멀티턴 루프",
+      description:
+        "model이 자기 자신을 가리키는 조건부 엣지(V5)로 2턴 돈다. 매 턴 이전 대화 전체가 모델에 실려 가고, messages가 addMessages로 누적된다(V8). **V5+V8+F1이 한 그래프에서 만나는 지점.** 모델을 두 번 부르므로 그만큼 더 걸린다.",
+      sampleInput: { messages: [human("1부터 세어봐. 한 번에 숫자 하나씩만.")], turns: 0 },
+      live: true,
+    },
+    (g, spec) => {
+      const m = model(spec, { system: "아주 짧게 답한다.", maxTokens: 256 });
+      g.addNode("model", async (s) => ({
+        messages: [await m.invoke(s.messages)],
+        turns: 1,
+      }));
+      g.addEdge(START, "model");
+      g.addConditionalEdges("model", (s) => (s.turns < 2 ? "model" : END));
+    },
+    { ...messagesSchema, turns: { reducer: (a, b) => a + b } },
   ),
 ];

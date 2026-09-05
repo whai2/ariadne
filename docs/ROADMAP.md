@@ -111,6 +111,10 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
 - [x] **S1 · 최소 스튜디오** — Bun.serve 로컬 서버(:4111) + 브라우저 UI. 그래프를 mermaid로 시각화 + invoke를 스텝별 실행/관찰.
   - **core를 진화시킴:** `getGraph()`(구조) + `stream()`(스텝 이벤트) 추가. `invoke = stream의 마지막`.
 - [x] **S2 · Channels 뷰** — 스텝마다 각 채널의 type/available/value를 패널로. "상태=채널들"을 눈으로. (core에 `BaseChannel.kind` + `ChannelSnapshot` + `stream`이 채널 스냅샷 yield)
+- [x] **S5 · 실제 모델 연결** — `@ariadne/model`을 물려 **진짜 모델이 도는 예제** 2종(`live-chat`, `live-loop`). 기본 `claude-code/sonnet`이라 **API 키 없이** 바로 보인다. UI에서 모델 스펙을 바꿔 200개 프로바이더 중 아무거나 지정할 수 있다.
+  - **core를 진화시키지 않았다.** 이번엔 Studio가 요구한 게 없다 — live 예제의 그래프 구조가 기존 예제와 똑같아서, 관찰 API가 그대로 통했다. 그게 F1의 "그래프는 안 바뀐다"가 관찰 층에서도 참이라는 증거다.
+  - **지연 생성이 핵심.** 예제 그래프를 import 시점에 만들면 자격증명 없는 환경에서 `model()`이 던져 **스튜디오 전체가 안 뜬다**. `Example.build(spec)`으로 미뤘다. 빌드 실패는 실행 실패와 같은 자리에서 잡아 "어느 환경변수가 필요한지"를 그대로 보여준다.
+  - UI: live 배지 · 모델 입력칸 · 호출 중 표시(몇 초 걸린다) · 에러 박스. `PORT` 환경변수로 포트 변경(떠 있는 스튜디오를 안 죽이고 새 코드를 띄우려고).
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.

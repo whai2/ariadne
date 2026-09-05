@@ -10,6 +10,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ariadne/core": "workspace:*"
+    "@ariadne/core": "workspace:*",
+    "@ariadne/model": "workspace:*"
   }
 }

@@ -16,6 +16,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@ariadne/core": "workspace:*",
+        "@ariadne/model": "workspace:*",
       },
     },
     "packages/core": {

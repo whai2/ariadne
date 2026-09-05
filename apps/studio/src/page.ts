@@ -27,6 +27,11 @@ export const PAGE = `<!doctype html>
   .ch .k { font-weight: 600; }
   .ch .t { color: #85f; font-family: ui-monospace, monospace; }
   .ch .v { font-family: ui-monospace, monospace; color: #333; }
+  .live { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:4px; background:#fee; color:#c00; font-size:11px; font-weight:700; }
+  #model { display:none; width:100%; box-sizing:border-box; margin-top:8px; font:12px ui-monospace,monospace; padding:6px 8px; border:1px solid #ddd; border-radius:6px; }
+  #hint { display:none; color:#c60; font-size:12px; margin:6px 0 0; }
+  button:disabled { background:#bbb; cursor:progress; }
+  .err { color:#c00; background:#fff5f5; border:1px solid #fcc; border-radius:6px; padding:10px; font:12px ui-monospace,monospace; white-space:pre-wrap; }
   .ok { color: #0b6; }
   .empty { color: #bbb; }
 </style>
@@ -42,6 +47,8 @@ export const PAGE = `<!doctype html>
   </section>
   <section>
     <h2>Run</h2>
+    <input id="model" placeholder="claude-code/sonnet" />
+    <p id="hint">🔴 진짜 모델을 부른다 — 응답까지 몇 초 걸린다. 모델은 위 칸에서 바꿀 수 있다(예: groq/llama-3.3-70b).</p>
     <textarea id="input" rows="4">{ "text": "hi", "steps": 0 }</textarea>
     <button id="run">▶ Invoke</button>
     <div id="steps"></div>
@@ -65,8 +72,14 @@ export const PAGE = `<!doctype html>
     return lines.join("\\n");
   }
 
+  function modelSpec() {
+    var el = document.getElementById("model");
+    return el.value.trim() || el.placeholder;
+  }
+
   async function drawGraph(id) {
     var graph = await (await fetch("/api/graph?id=" + encodeURIComponent(id))).json();
+    if (graph.error) { document.getElementById("graph").innerHTML = "<div class='err'>" + graph.error + "</div>"; return; }
     var out = await mermaid.render("g" + (++renderSeq), toMermaid(graph));
     document.getElementById("graph").innerHTML = out.svg;
   }
@@ -77,6 +90,10 @@ export const PAGE = `<!doctype html>
     document.getElementById("desc").textContent = ex ? ex.description : "";
     document.getElementById("input").value = ex ? JSON.stringify(ex.sampleInput, null, 2) : "{}";
     document.getElementById("steps").innerHTML = "";
+    // live 예제만 모델을 고를 수 있다 — 나머지는 모델을 안 쓴다.
+    var live = ex && ex.live;
+    document.getElementById("model").style.display = live ? "block" : "none";
+    document.getElementById("hint").style.display = live ? "block" : "none";
     await drawGraph(id);
   }
 
@@ -92,13 +109,27 @@ export const PAGE = `<!doctype html>
 
   async function run() {
     var box = document.getElementById("steps");
+    var btn = document.getElementById("run");
     var input;
     try { input = JSON.parse(document.getElementById("input").value); }
-    catch (e) { box.innerHTML = "<p style='color:#c00'>입력 JSON 오류</p>"; return; }
-    var res = await (await fetch("/api/run", {
-      method: "POST", body: JSON.stringify({ id: currentId, input: input }),
-    })).json();
-    if (res.error) { box.innerHTML = "<p style='color:#c00'>" + res.error + "</p>"; return; }
+    catch (e) { box.innerHTML = "<div class='err'>입력 JSON 오류</div>"; return; }
+
+    // 진짜 모델은 몇 초 걸린다 — 눌러놓고 아무 반응 없으면 고장으로 보인다.
+    var ex = EXAMPLES.find(function (e) { return e.id === currentId; });
+    btn.disabled = true;
+    box.innerHTML = "<p style='color:#888'>" + (ex && ex.live ? "모델 호출 중… (몇 초)" : "실행 중…") + "</p>";
+
+    var res;
+    try {
+      res = await (await fetch("/api/run", {
+        method: "POST",
+        body: JSON.stringify({ id: currentId, input: input, model: ex && ex.live ? modelSpec() : undefined }),
+      })).json();
+    } catch (e) {
+      box.innerHTML = "<div class='err'>요청 실패: " + e + "</div>"; btn.disabled = false; return;
+    } finally { btn.disabled = false; }
+
+    if (res.error) { box.innerHTML = "<div class='err'>" + res.error + "</div>"; return; }
     box.innerHTML = res.steps.map(function (s) {
       var rows = s.channels.map(function (c) {
         var badge = c.available

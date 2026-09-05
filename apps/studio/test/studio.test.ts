@@ -137,3 +137,77 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(nf.status).toBe(404);
   });
 });
+
+describe("live 예제 — 진짜 모델을 부르는 그래프", () => {
+  function runWith(id: string, input: unknown, model?: string) {
+    return studio.fetch(
+      new Request("http://x/api/run", {
+        method: "POST",
+        body: JSON.stringify({ id, input, model }),
+      }),
+    );
+  }
+
+  it("목록이 live 플래그를 알려준다 — UI가 배지·경고를 띄우는 근거", async () => {
+    const list = (await (
+      await studio.fetch(new Request("http://x/api/examples"))
+    ).json()) as Array<{
+      id: string;
+      live: boolean;
+    }>;
+    const live = list.filter((e) => e.live).map((e) => e.id);
+    expect(live).toEqual(["live-chat", "live-loop"]);
+    // 나머지는 전부 모델 없이 도는 순수 예제여야 한다(키 없이도 스튜디오가 쓸모 있게).
+    expect(list.filter((e) => !e.live).length).toBeGreaterThanOrEqual(12);
+  });
+
+  it("**그래프는 지연 생성된다** — 모르는 모델을 줘도 스튜디오가 죽지 않는다", async () => {
+    // import 시점에 만들었다면 자격증명 없는 환경에서 서버가 아예 안 떴을 것이다.
+    const res = await runWith("live-chat", { messages: [] }, "그런프로바이더없음/m");
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("UnknownProviderError");
+  });
+
+  it("키가 필요한 모델을 고르면 **어느 환경변수인지** 말해준다", async () => {
+    const res = await runWith("live-chat", { messages: [] }, "groq/llama-3.3-70b");
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("GROQ_API_KEY");
+  });
+
+  it("live 예제도 구조는 평범하다 — getGraph가 똑같이 나온다", async () => {
+    const g = (await (
+      await studio.fetch(new Request("http://x/api/graph?id=live-chat"))
+    ).json()) as { nodes: string[]; edges: Array<{ from: string; to: string }> };
+    expect(g.nodes).toContain("model");
+    expect(g.edges.length).toBeGreaterThan(0);
+  });
+});
+
+// 실제 모델 호출. `claude` CLI가 있을 때만 돈다(API 키는 필요 없다).
+const hasCli = Bun.spawnSync(["which", "claude"]).exitCode === 0;
+describe.skipIf(!hasCli)("Studio → 진짜 모델 (구독 자격증명)", () => {
+  it("live-chat이 스튜디오를 통해 진짜 답을 받는다", async () => {
+    const res = await runLive("live-chat", {
+      messages: [{ role: "human", content: "'pong'이라고만 답해라." }],
+    });
+    expect(res.status).toBe(200);
+    const { steps } = (await res.json()) as {
+      steps: Array<{
+        nodes: string[];
+        state: { messages: Array<{ role: string; content: string }> };
+      }>;
+    };
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.nodes).toEqual(["model"]);
+    const msgs = steps[0]?.state.messages ?? [];
+    expect(msgs.at(-1)?.role).toBe("ai");
+    expect((msgs.at(-1)?.content ?? "").length).toBeGreaterThan(0);
+  }, 120_000);
+});
+
+function runLive(id: string, input: unknown) {
+  return studio.fetch(
+    new Request("http://x/api/run", { method: "POST", body: JSON.stringify({ id, input }) }),
+  );
+}
