@@ -488,3 +488,13 @@ describe.skipIf(!hasCli)("분업이 실제로 나뉜다 (구독 자격증명)", 
     expect(res.messages[0]?.content).not.toBe(res.messages[1]?.content);
   }, 240_000);
 });
+
+describe("한글 입력 (IME) 회귀 가드", () => {
+  it("조합 중 Enter는 전송하지 않는다", async () => {
+    // 없으면 마지막 글자를 확정하는 Enter가 전송까지 트리거해서,
+    // "노션과 클릭업 연결"을 보내고 남은 "결"이 두 번째 메시지로 따로 날아간다.
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    expect(html).toContain("e.isComposing");
+    expect(html).toContain("229"); // isComposing 없는 브라우저 폴백
+  });
+});

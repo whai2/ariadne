@@ -312,6 +312,11 @@ export const PAGE = `<!doctype html>
 
   document.getElementById("send").addEventListener("click", send);
   document.getElementById("say").addEventListener("keydown", function (e) {
+    // **IME 조합 중 Enter는 무시한다.** 한글/일본어 입력에서 마지막 글자를 확정하는
+    // Enter가 전송까지 같이 트리거하면, 확정 전 텍스트가 먼저 나가고 남은 조합 글자가
+    // 두 번째 메시지로 따로 날아간다. ("노션과 클럽업 연결" + "결" 이런 식으로.)
+    // keyCode 229는 isComposing을 안 주는 옛 브라우저용 폴백.
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
   document.getElementById("reset").addEventListener("click", function () {
