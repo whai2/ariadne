@@ -55,6 +55,7 @@ export const PAGE = `<!doctype html>
   .err { color: #c00; background: #fff5f5; border: 1px solid #fcc; border-radius: 6px; padding: 10px; font: 12px ui-monospace, monospace; white-space: pre-wrap; }
   .hidden { display: none; }
   .muted { color: #888; font-size: 12px; margin: 6px 0 0; }
+  #fatal { display: none; padding: 10px 20px; background: #fff3cd; border-bottom: 1px solid #ffe08a; color: #7a5b00; font: 13px ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -66,6 +67,7 @@ export const PAGE = `<!doctype html>
     <button class="tab" id="tab-ex">Examples</button>
   </div>
 </header>
+<div id="fatal"></div>
 
 <main id="view-chat">
   <section>
@@ -119,13 +121,25 @@ export const PAGE = `<!doctype html>
 
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
-  mermaid.initialize({ startOnLoad: false });
+  // 무슨 일이 나든 **화면에 보이게** 한다. 조용히 죽으면 빈 드롭다운만 남아 원인을 못 찾는다.
+  function fatal(msg) {
+    var bar = document.getElementById("fatal");
+    if (bar) { bar.textContent = "⚠ " + msg; bar.style.display = "block"; }
+  }
+  window.addEventListener("error", function (e) { fatal(e.message); });
+
+  // mermaid는 CDN이라 실패할 수 있다. 그림이 안 그려질 뿐, 나머지는 돌아야 한다.
+  var MERMAID = typeof mermaid !== "undefined";
+  if (MERMAID) { mermaid.initialize({ startOnLoad: false }); }
+  else { fatal("mermaid CDN 로드 실패 — 그래프 그림만 안 나온다(대화는 정상)."); }
   var renderSeq = 0;
   function labelOf(n) { return n === "__start__" ? "START" : n === "__end__" ? "END" : n; }
   function toMermaid(graph) {
     var lines = ["graph TD"];
     graph.edges.forEach(function (e) {
-      lines.push("  " + e.from + "[\\"" + labelOf(e.from) + "\\"] --> " + e.to + "[\\"" + labelOf(e.to) + "\\"]");
+      // 조건부는 점선 — 라우터가 런타임에 고르는 길이라 항상 가는 게 아니다.
+      var arrow = e.kind === "conditional" ? " -.-> " : " --> ";
+      lines.push("  " + e.from + "[\\"" + labelOf(e.from) + "\\"]" + arrow + e.to + "[\\"" + labelOf(e.to) + "\\"]");
     });
     return lines.join("\\n");
   }
@@ -159,7 +173,10 @@ export const PAGE = `<!doctype html>
 
   // ─── Chat ─────────────────────────────────────────────────────────────────
   var PROVIDERS = [];
-  var history = [];
+  // 주의: 이 변수를 history라고 부르면 안 된다. 전역 스코프의 var는 window.history
+  // (History 객체)를 덮지 못해서 .map()이 TypeError로 터지고, 그러면 바로 아래
+  // loadProviders()까지 통째로 안 돌아 드롭다운이 빈 채로 남는다. (실제로 그렇게 당했다.)
+  var convo = [];
 
   function currentProvider() {
     var id = document.getElementById("provider").value;
@@ -177,7 +194,13 @@ export const PAGE = `<!doctype html>
   }
 
   async function loadProviders() {
-    PROVIDERS = await (await fetch("/api/providers")).json();
+    try {
+      PROVIDERS = await (await fetch("/api/providers")).json();
+    } catch (e) {
+      fatal("프로바이더 목록을 못 불러왔다: " + e);
+      return;
+    }
+    if (!PROVIDERS.length) { fatal("프로바이더가 0개다 — 서버 /api/providers 확인."); return; }
     var ready = PROVIDERS.filter(function (p) { return p.ready; });
     var rest = PROVIDERS.filter(function (p) { return !p.ready; });
     function opts(list) {
@@ -195,7 +218,7 @@ export const PAGE = `<!doctype html>
 
   function renderLog(pending) {
     var box = document.getElementById("log");
-    var html = history.map(function (m) {
+    var html = convo.map(function (m) {
       return "<div class='msg " + m.role + "'><div class='who'>" + m.role + "</div>" +
         "<div class='body'>" + esc(m.content) + "</div></div>";
     }).join("");
@@ -215,7 +238,7 @@ export const PAGE = `<!doctype html>
     var out = document.getElementById("chatsteps");
     if (!p || !modelId) { out.innerHTML = "<div class='err'>프로바이더와 모델을 고르라</div>"; return; }
 
-    history.push({ role: "human", content: text });
+    convo.push({ role: "human", content: text });
     ta.value = "";
     renderLog(true);
     var btn = document.getElementById("send");
@@ -228,7 +251,7 @@ export const PAGE = `<!doctype html>
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           spec: p.id + "/" + modelId,
-          messages: history,
+          messages: convo,
           system: document.getElementById("system").value.trim() || undefined,
         }),
       })).json();
@@ -244,10 +267,10 @@ export const PAGE = `<!doctype html>
       out.innerHTML = "<div class='err'>" + esc(res.error) + "</div>";
       return;
     }
-    history = history.concat(res.messages);
+    convo = convo.concat(res.messages);
     renderLog(false);
     out.innerHTML = stepsHtml(res.steps);
-    if (!document.querySelector("#chatgraph svg")) {
+    if (MERMAID && !document.querySelector("#chatgraph svg")) {
       var g = await mermaid.render("cg" + (++renderSeq),
         "graph TD\\n  s[\\"START\\"] --> model[\\"model\\"]\\n  model --> e[\\"END\\"]");
       document.getElementById("chatgraph").innerHTML = g.svg;
@@ -259,7 +282,7 @@ export const PAGE = `<!doctype html>
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
   document.getElementById("reset").addEventListener("click", function () {
-    history = []; renderLog(false);
+    convo = []; renderLog(false);
     document.getElementById("chatsteps").innerHTML = "";
   });
 
@@ -275,6 +298,7 @@ export const PAGE = `<!doctype html>
   async function drawGraph(id) {
     var graph = await (await fetch("/api/graph?id=" + encodeURIComponent(id))).json();
     if (graph.error) { document.getElementById("graph").innerHTML = "<div class='err'>" + esc(graph.error) + "</div>"; return; }
+    if (!MERMAID) { document.getElementById("graph").innerHTML = "<pre>" + esc(toMermaid(graph)) + "</pre>"; return; }
     var out = await mermaid.render("g" + (++renderSeq), toMermaid(graph));
     document.getElementById("graph").innerHTML = out.svg;
   }

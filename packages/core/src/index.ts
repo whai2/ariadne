@@ -33,6 +33,7 @@ export type {
   BoundFn,
   ChannelSnapshot,
   ChannelWriteEntry,
+  GraphEdge,
   GraphView,
   PregelNode,
   PregelSpec,

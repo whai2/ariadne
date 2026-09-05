@@ -276,8 +276,10 @@ export const examples: Example[] = [
       });
       g.addNode("tool", () => ({ messages: [system("도구결과: 4")] })); // 가짜 툴
       g.addEdge(START, "model");
-      g.addConditionalEdges("model", (s) =>
-        s.messages.at(-1)?.content.startsWith("도구호출:") ? "tool" : END,
+      g.addConditionalEdges(
+        "model",
+        (s) => (s.messages.at(-1)?.content.startsWith("도구호출:") ? "tool" : END),
+        ["tool", END], // ← 이걸 적어야 루프가 그림에 나온다(path_map)
       );
       g.addEdge("tool", "model"); // 도구 결과 들고 다시 model로 (루프)
     },
@@ -299,7 +301,9 @@ export const examples: Example[] = [
       g.addNode<string>("summarize", (doc) => ({ summaries: [`요약(${doc})`] }));
       g.addNode("generate", (s) => ({ answer: `답변: ${s.summaries.join(" / ")}` }));
       g.addEdge(START, "retrieve");
-      g.addConditionalEdges("retrieve", (s) => s.docs.map((d) => new Send("summarize", d)));
+      g.addConditionalEdges("retrieve", (s) => s.docs.map((d) => new Send("summarize", d)), [
+        "summarize", // Send도 대상을 적어주면 팬아웃이 그림에 나온다
+      ]);
       g.addEdge("summarize", "generate"); // N개의 summarize가 generate로 팬인
       g.addEdge("generate", END);
     },
@@ -344,7 +348,7 @@ export const examples: Example[] = [
         turns: 1,
       }));
       g.addEdge(START, "model");
-      g.addConditionalEdges("model", (s) => (s.turns < 2 ? "model" : END));
+      g.addConditionalEdges("model", (s) => (s.turns < 2 ? "model" : END), ["model", END]);
     },
     { ...messagesSchema, turns: { reducer: (a, b) => a + b } },
   ),

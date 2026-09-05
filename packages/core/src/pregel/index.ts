@@ -15,4 +15,11 @@ export {
 } from "./algo";
 export { CompiledGraph } from "./loop";
 export type { BoundFn, ChannelWriteEntry, PregelNode, Writer } from "./node";
-export type { ChannelSnapshot, Channels, GraphView, PregelSpec, StepUpdate } from "./types";
+export type {
+  ChannelSnapshot,
+  Channels,
+  GraphEdge,
+  GraphView,
+  PregelSpec,
+  StepUpdate,
+} from "./types";

@@ -21,10 +21,47 @@ describe("core 관찰 API (Studio가 요구)", () => {
     const view = linear().getGraph();
     expect(view.nodes).toEqual(["a", "b"]);
     expect(view.edges).toEqual([
-      { from: START, to: "a" },
-      { from: "a", to: "b" },
-      { from: "b", to: END },
+      { from: START, to: "a", kind: "static" },
+      { from: "a", to: "b", kind: "static" },
+      { from: "b", to: END, kind: "static" },
     ]);
+  });
+
+  it("조건부 엣지는 **대상을 알려줘야** 그림에 나온다 (langgraph의 path_map)", () => {
+    // 라우터는 런타임 함수라 컴파일 타임에 행선지를 모른다.
+    const g = new StateGraph<{ n: number }>();
+    g.addNode("model", (s) => ({ n: s.n + 1 }));
+    g.addNode("tool", (s) => ({ n: s.n }));
+    g.addEdge(START, "model");
+    g.addEdge("tool", "model"); // 루프의 돌아오는 길은 정적이다
+    g.addConditionalEdges("model", (s) => (s.n < 2 ? "tool" : END), ["tool", END]);
+
+    const view = g.compile().getGraph();
+    expect(view.edges).toEqual([
+      { from: START, to: "model", kind: "static" },
+      { from: "tool", to: "model", kind: "static" },
+      { from: "model", to: "tool", kind: "conditional" },
+      { from: "model", to: END, kind: "conditional" },
+    ]);
+  });
+
+  it("대상을 안 알려주면 그림에서 **사라진다** — 모르는 걸 지어내지 않는다", () => {
+    const g = new StateGraph<{ n: number }>();
+    g.addNode("a", (s) => ({ n: s.n + 1 }));
+    g.addEdge(START, "a");
+    g.addConditionalEdges("a", () => END); // targets 없음
+    expect(g.compile().getGraph().edges).toEqual([{ from: START, to: "a", kind: "static" }]);
+  });
+
+  it("targets는 **그림용일 뿐** — 실행은 라우터가 정한다", async () => {
+    const g = new StateGraph<{ log: string[] }>({ log: { reducer: (a, b) => [...a, ...b] } });
+    g.addNode("a", () => ({ log: ["a"] }));
+    g.addNode("b", () => ({ log: ["b"] }));
+    g.addEdge(START, "a");
+    // 목록엔 b만 적었지만 라우터는 END로 간다 — 막지 않는다.
+    g.addConditionalEdges("a", () => END, ["b"]);
+    const out = await g.compile().invoke({ log: [] });
+    expect(out.log).toEqual(["a"]); // b는 안 돌았다
   });
 
   it("stream()이 superstep별로 {step, nodes, state}를 순서대로 내보낸다", async () => {

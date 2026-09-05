@@ -27,7 +27,22 @@ export interface PregelSpec<S extends object> {
 /** 그래프의 구조(노드/엣지). Studio가 그림을 그릴 때 읽는다. langgraph 대응: get_graph(). */
 export interface GraphView {
   nodes: string[];
-  edges: Array<{ from: string; to: string }>;
+  edges: GraphEdge[];
+}
+
+/**
+ * 그림에 그릴 엣지 하나.
+ *
+ * `kind`가 필요한 이유: **조건부 엣지는 컴파일 타임에 대상을 모른다.** 라우터가 런타임
+ * 함수라서 `addConditionalEdges("model", (s) => ...)`만 봐서는 어디로 갈지 알 수 없다.
+ * 그래서 선언할 때 후보를 같이 적어주면(`targets`) 그걸 **점선**으로 그린다.
+ * langgraph의 `path_map`이 같은 문제를 같은 방식으로 푼다.
+ */
+export interface GraphEdge {
+  from: string;
+  to: string;
+  /** `static`(항상 간다) · `conditional`(라우터가 고를 수도 있다). 생략 시 static. */
+  kind?: "static" | "conditional";
 }
 
 /** 한 채널의 관찰용 스냅샷(Studio가 채널 패널에 그린다). */

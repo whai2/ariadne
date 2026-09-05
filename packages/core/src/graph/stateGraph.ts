@@ -83,6 +83,11 @@ export class StateGraph<S extends object> {
   private readonly edges = new Map<string, string[]>();
   /** 조건부 아웃엣지: from -> [routers]. 실행 시 각 router(state)가 대상을 고른다. (V5) */
   private readonly branches = new Map<string, Router<S>[]>();
+  /**
+   * 조건부 엣지가 **갈 수 있는 곳**(선언된 것만). 실행에는 안 쓰이고 **그림에만** 쓰인다.
+   * 라우터는 런타임 함수라 대상을 정적으로 알 수 없어서, 알려주면 그때만 그려진다.
+   */
+  private readonly branchTargets = new Map<string, Set<string>>();
   /** 다중소스 엣지: starts가 **전부** 도착해야 end가 돈다. (V7) */
   private readonly waitingEdges: Array<{ starts: string[]; end: string }> = [];
 
@@ -152,8 +157,13 @@ export class StateGraph<S extends object> {
    * router는 노드명 하나·여러 개(팬아웃)·`END`·`Send`를 반환할 수 있다. 정적 엣지와 공존 가능.
    * router가 보는 상태는 **source 자신의 쓰기까지만 반영된 로컬 뷰**다(같은 스텝의 다른
    * 노드 쓰기는 안 보임 — BSP). langgraph 대응: graph/state.py:982 add_conditional_edges.
+   *
+   * `targets`는 **그림용**이다. 라우터는 런타임 함수라 컴파일 타임에 행선지를 알 수 없어서,
+   * 적어주지 않으면 `getGraph()`에 이 엣지가 **아예 안 나온다**(루프가 그림에서 사라진다).
+   * 실행에는 전혀 영향이 없다 — 검증에도 쓰지 않는다(라우터가 목록 밖으로 가도 막지 않는다).
+   * langgraph의 `path_map`과 같은 역할.
    */
-  addConditionalEdges(source: string, router: Router<S>): this {
+  addConditionalEdges(source: string, router: Router<S>, targets?: string[]): this {
     if (source === END) {
       throw new Error("END에서 나가는 엣지는 만들 수 없다.");
     }
@@ -163,6 +173,12 @@ export class StateGraph<S extends object> {
     const routers = this.branches.get(source) ?? [];
     routers.push(router);
     this.branches.set(source, routers);
+
+    if (targets !== undefined) {
+      const known = this.branchTargets.get(source) ?? new Set<string>();
+      for (const t of targets) known.add(t);
+      this.branchTargets.set(source, known);
+    }
     return this;
   }
 
@@ -254,9 +270,15 @@ export class StateGraph<S extends object> {
       view: {
         nodes: [...known],
         edges: [
-          ...[...this.edges].flatMap(([from, tos]) => tos.map((to) => ({ from, to }))),
+          ...[...this.edges].flatMap(([from, tos]) =>
+            tos.map((to) => ({ from, to, kind: "static" as const })),
+          ),
           ...this.waitingEdges.flatMap(({ starts, end }) =>
-            starts.map((from) => ({ from, to: end })),
+            starts.map((from) => ({ from, to: end, kind: "static" as const })),
+          ),
+          // 선언된 조건부 대상만. 안 적었으면 그림에 안 나온다(정직하게 모르는 것이다).
+          ...[...this.branchTargets].flatMap(([from, tos]) =>
+            [...tos].map((to) => ({ from, to, kind: "conditional" as const })),
           ),
         ],
       },

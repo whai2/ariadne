@@ -286,3 +286,76 @@ describe.skipIf(!hasCli)("Chat → 진짜 모델 (구독 자격증명)", () => {
     expect(turn2.messages[0]?.content).toContain("7");
   }, 180_000);
 });
+
+describe("클라이언트 JS 회귀 가드", () => {
+  async function clientScript(): Promise<string> {
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1] ?? "");
+    return blocks.at(-1) ?? "";
+  }
+
+  it("전역 이름이 window의 내장 속성과 충돌하지 않는다", async () => {
+    // `var history = []`는 window.history(History 객체)를 못 덮는다 → .map()이 TypeError.
+    // 스크립트 맨 위에서 터지면 **아래 전부가 안 돌아** 빈 화면만 남는다. 실제로 당했다.
+    const script = await clientScript();
+    const declared = [
+      ...script.matchAll(/^\s*(?:var|let|const|function)\s+([A-Za-z_$][\w$]*)/gm),
+    ].map((m) => m[1] as string);
+
+    const RESERVED = [
+      "history",
+      "location",
+      "name",
+      "top",
+      "parent",
+      "self",
+      "status",
+      "length",
+      "origin",
+      "closed",
+      "frames",
+      "opener",
+      "screen",
+      "navigator",
+    ];
+    const clashes = declared.filter((d) => RESERVED.includes(d));
+    expect(clashes, `window 내장과 충돌: ${clashes.join(", ")}`).toEqual([]);
+  });
+
+  it("페이지 HTML은 캐시되지 않는다 — 고쳐도 예전 화면이 나오면 원인 찾기가 지옥이다", async () => {
+    const res = await studio.fetch(new Request("http://x/"));
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("mermaid 없이도 나머지가 돌도록 가드가 있다", async () => {
+    const script = await clientScript();
+    // CDN 실패가 드롭다운까지 죽이면 안 된다.
+    expect(script).toContain('typeof mermaid !== "undefined"');
+  });
+});
+
+describe("조건부 엣지가 그림에 나온다 (path_map)", () => {
+  async function graphOf(id: string) {
+    return (await (await studio.fetch(new Request("http://x/api/graph?id=" + id))).json()) as {
+      edges: Array<{ from: string; to: string; kind?: string }>;
+    };
+  }
+
+  it("ReAct 루프가 보인다 — 예전엔 그림에서 통째로 사라졌다", async () => {
+    const { edges } = await graphOf("react");
+    const cond = edges.filter((e) => e.kind === "conditional");
+    expect(cond.map((e) => e.to).sort()).toEqual(["__end__", "tool"]);
+    // 돌아오는 길은 정적이라, 둘이 합쳐져야 순환이 그려진다.
+    expect(edges).toContainEqual({ from: "tool", to: "model", kind: "static" });
+  });
+
+  it("RAG의 Send 팬아웃도 보인다", async () => {
+    const { edges } = await graphOf("rag");
+    expect(edges).toContainEqual({ from: "retrieve", to: "summarize", kind: "conditional" });
+  });
+
+  it("mermaid로 옮길 때 조건부는 점선이 된다", async () => {
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    expect(html).toContain('e.kind === "conditional" ? " -.-> " : " --> "');
+  });
+});

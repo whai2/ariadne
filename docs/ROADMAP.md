@@ -118,6 +118,10 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
   - **대화도 그래프로 돈다.** `chatTurn()`이 `START→model→END`(messagesSchema)를 세워 `stream()`으로 돌린다 — 그래서 오른쪽 패널에 **이번 턴의 스텝·채널**이 그대로 뜬다. 일반 챗 UI와 갈리는 지점이자, 이 스튜디오가 그래프 엔진의 관찰 도구라는 정체성.
   - 이력은 매 턴 전체를 보낸다(API가 stateless인 것과 같은 이유). 새로 생긴 메시지만 돌려주므로 클라이언트가 이어붙인다.
   - Examples 탭에 기존 갤러리 + live 예제 2종. `PORT` 환경변수로 포트 변경(떠 있는 스튜디오를 안 죽이고 새 코드를 띄우려고).
+- [x] **S6 · 조건부 엣지를 그림에** — ReAct 루프도 RAG의 Send 팬아웃도 그림에서 통째로 빠져 있었다(V5가 미룬 `path_map`의 대가). `addConditionalEdges(src, router, targets?)`로 후보를 선언하면 **점선**으로 그린다.
+  - **core를 진화시킴:** `GraphView.edges`에 `kind: "static" | "conditional"`, `StateGraph`에 `branchTargets`. V5 노트가 예고한 숙제를 여기서 갚았다.
+  - **설계 원칙 둘:** ① `targets`는 그림용일 뿐 **실행·검증에 관여하지 않는다**(라우터가 목록 밖으로 가도 막지 않는다). ② 안 적으면 **안 그린다** — 모르는 걸 지어내면 관찰 도구가 아니다.
+  - Send도 같은 방식으로 적는다. "런타임에 정해지는 행선지"라는 점에서 조건부와 구분할 이유가 없다. ([노트 16](notes/16-s6-path-map.md))
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.

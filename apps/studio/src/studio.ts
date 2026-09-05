@@ -48,7 +48,12 @@ export function createStudio(examples: Example[]): Studio {
 
       if (req.method === "GET" && url.pathname === "/") {
         return new Response(PAGE, {
-          headers: { "content-type": "text/html; charset=utf-8" },
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            // 개발 서버는 절대 캐시하면 안 된다 — 코드를 고치고 새로고침했는데
+            // 예전 화면이 나오면 원인 찾기가 지옥이다.
+            "cache-control": "no-store",
+          },
         });
       }
 
