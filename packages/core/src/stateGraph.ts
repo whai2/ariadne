@@ -11,6 +11,7 @@ import type { NodeFn, Router, StateSchema } from "./types";
  * - 노드는 아웃엣지를 **여러 개** 가질 수 있다(분기/팬아웃). (V4)
  * - 조건부 엣지: `addConditionalEdges(source, router)` — router(state)가 런타임에
  *   다음 노드를 고른다. 조건 분기/루프가 가능해진다. (V5)
+ * - 라우터가 `Send(node, arg)`를 반환하면 리스트를 런타임 개수만큼 동적 병렬 처리(map-reduce). (V6)
  */
 export class StateGraph<S extends object> {
   /** 노드 이름 -> 실행 함수 */

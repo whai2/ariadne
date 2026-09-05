@@ -7,6 +7,7 @@ export { LastValue } from "./channels/lastValue";
 export { END, START } from "./constants";
 export { EmptyChannelError, InvalidUpdateError } from "./errors";
 export { CompiledGraph } from "./pregel";
+export { Send } from "./send";
 export { StateGraph } from "./stateGraph";
 export type {
   ChannelSnapshot,
@@ -14,6 +15,7 @@ export type {
   GraphView,
   NodeFn,
   Router,
+  RouteTarget,
   StateSchema,
   StepUpdate,
 } from "./types";
