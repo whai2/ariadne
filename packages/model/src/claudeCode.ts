@@ -16,6 +16,7 @@
 // (세션·툴·승인 게이트를 살리려면 그때 SDK가 필요해진다 → F3)
 
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { type AIMessage, ai, type BaseMessage } from "@ariadne/core";
 import { ClaudeCodeError, EmptyConversationError } from "./errors";
 import type { ChatModel, ChatOptions } from "./types";
@@ -57,7 +58,17 @@ export interface ClaudeCodeConfig {
   system?: string;
   /** `claude` 실행 파일 경로. 기본은 PATH의 `claude`. */
   executable?: string;
-  /** 작업 디렉터리. 툴을 다 막았으므로 보통 의미 없다. */
+  /**
+   * 작업 디렉터리. **기본은 임시 디렉터리다(중요).**
+   *
+   * `claude`는 실행된 디렉터리에서 `CLAUDE.md`·스킬·플러그인을 자동으로 읽는다.
+   * 저장소 안에서 띄우면 그 맥락이 통째로 프롬프트에 실려, 우리가 준 system 지시를
+   * 덮어버린다. 실측: 같은 질문에 저장소에서는 지시를 무시한 산문 16.9초,
+   * 임시 디렉터리에서는 지시대로 JSON 6.0초.
+   *
+   * ChatModel은 "텍스트 한 번 주고받기"라 저장소 맥락이 필요 없다 — 오염일 뿐이다.
+   * 저장소 맥락을 **일부러** 쓰고 싶으면 명시적으로 넘겨라.
+   */
   cwd?: string;
   /** 관찰용 라벨. */
   provider?: string;
@@ -163,7 +174,7 @@ function spawnCli(executable: string, cwd?: string): RunCli {
  * 툴·세션·승인 게이트를 살리고 싶다면 이 인터페이스로는 부족하다(→ F3 에이전트 링).
  */
 export function claudeCodeChat(config: ClaudeCodeConfig = {}): ChatModel {
-  const run = config.run ?? spawnCli(config.executable ?? "claude", config.cwd);
+  const run = config.run ?? spawnCli(config.executable ?? "claude", config.cwd ?? tmpdir());
 
   return {
     provider: config.provider ?? "claude-code",

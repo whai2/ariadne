@@ -372,7 +372,7 @@ describe("챗 그래프 모양 선택", () => {
       id: string;
       calls: number;
     }>;
-    expect(list.map((s) => s.id)).toEqual(["single", "chain", "parallel", "loop"]);
+    expect(list.map((s) => s.id)).toEqual(["single", "chain", "parallel", "loop", "dispatch"]);
     for (const s of list) expect(s.calls).toBeGreaterThan(0);
   });
 
@@ -436,4 +436,55 @@ describe("UI 문구가 실제 동작과 어긋나지 않는다", () => {
     const footer = html.slice(html.indexOf("대화도"), html.indexOf("대화도") + 200);
     expect(footer).not.toContain("START→model→END");
   });
+});
+
+describe("분업 모양 (Send 팬아웃)", () => {
+  it("parseTasks — 모델이 JSON을 안 줘도 조용히 죽지 않는다", async () => {
+    const { parseTasks } = await import("../src/chat");
+    expect(parseTasks('["A", "B"]', "폴백")).toEqual(["A", "B"]);
+    expect(parseTasks('앞말\n["A", "B"]\n뒷말', "폴백")).toEqual(["A", "B"]); // 설명이 붙어도 건진다
+    expect(parseTasks("그냥 산문 답변", "원래 질문")).toEqual(["원래 질문"]); // 폴백
+    expect(parseTasks("[]", "원래 질문")).toEqual(["원래 질문"]); // 빈 배열도 폴백
+    expect(parseTasks(JSON.stringify(["a", "b", "c", "d", "e"]), "f")).toHaveLength(4); // 폭주 방지
+  });
+
+  it("구조: dispatch가 Send로 worker를 팬아웃한다", async () => {
+    const g = (await (
+      await studio.fetch(new Request("http://x/api/chat/graph?shape=dispatch"))
+    ).json()) as { nodes: string[]; edges: Array<{ from: string; to: string; kind?: string }> };
+    expect(g.nodes).toEqual(["dispatch", "worker"]);
+    // Send는 라우터 반환값이라 조건부로 그려진다(S6).
+    expect(g.edges).toContainEqual({ from: "dispatch", to: "worker", kind: "conditional" });
+  });
+});
+
+describe.skipIf(!hasCli)("분업이 실제로 나뉜다 (구독 자격증명)", () => {
+  it("워커가 **각자 다른 작업**을 받는다 — 병렬 모양과 갈리는 지점", async () => {
+    const res = (await (
+      await studio.fetch(
+        new Request("http://x/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            spec: "claude-code/sonnet",
+            shape: "dispatch",
+            system: "두 문장 이내.",
+            messages: [{ role: "human", content: "노션과 클릭업 연결 방법" }],
+          }),
+        }),
+      )
+    ).json()) as {
+      messages: Array<{ content: string }>;
+      steps: Array<{ nodes: string[]; state: { tasks: string[] } }>;
+    };
+
+    // dispatch가 쪼갠 뒤, 워커들이 다음 스텝에 병렬로 뜬다.
+    expect(res.steps[0]?.nodes).toEqual(["dispatch"]);
+    expect(res.steps[0]?.state.tasks.length).toBeGreaterThan(1);
+    expect(res.steps[1]?.nodes.length).toBeGreaterThan(1); // worker × N
+
+    // 각 답이 자기 작업 이름을 달고 온다 → 서로 다른 일을 했다는 증거.
+    expect(res.messages.length).toBe(res.steps[0]?.state.tasks.length ?? 0);
+    expect(res.messages[0]?.content).not.toBe(res.messages[1]?.content);
+  }, 240_000);
 });

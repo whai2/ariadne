@@ -126,6 +126,9 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
   - `single` 스텝 1개 · `chain`(draft→revise) 선형 다단계, 스텝 2개 · `parallel`(plain·critical) **한 슈퍼스텝 병렬 + 리듀서 팬인**(V4) · `loop` 자기 루프(V5).
   - **보내기 전에 그림이 뜬다.** `/api/chat/graph?shape=`가 `spec` 없이 그래프를 세워 구조만 준다 — 자격증명이 없어도 모양을 볼 수 있다.
   - S6 덕에 `loop`의 자기 순환이 점선으로 그려진다. 두 단계가 맞물린 지점.
+- [x] **S8 · 분업 모양(Send 팬아웃)** — `parallel`이 "같은 질문에 두 관점"이라 **분업이 아니라는** 지적을 받고 추가. `dispatch`가 요청을 하위 작업 N개로 쪼개고 **각 워커가 자기 몫만** 받는다(V6 Send, `addNode<string>`). 패널에 `Step 0: dispatch` → `Step 1: worker · worker`로 뜬다.
+  - **claude-code 트랜스포트에서 두 가지를 배웠다.** ① `claude`는 실행된 디렉터리의 `CLAUDE.md`·스킬을 자동으로 읽는다 — 저장소에서 띄우면 그 맥락이 우리 system 지시를 덮는다(실측: 저장소 산문 16.9초 vs 임시 디렉터리 JSON 6.0초). 어댑터 기본 cwd를 임시 디렉터리로 바꿨다. ② **지시는 system보다 사용자 턴에 넣어야 먹힌다** — system에 "JSON만" 1/3, 프롬프트에 넣으면 3/3.
+  - 제어 노드(dispatch)는 사용자 System을 **안 물려받는다**. "두 문장 이내" 같은 답변 지시가 계획 형식과 충돌한다.
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.

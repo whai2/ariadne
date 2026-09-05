@@ -8,8 +8,10 @@ import {
   ai,
   type BaseMessage,
   END,
+  human,
   type MessagesState,
   messagesSchema,
+  Send,
   START,
   StateGraph,
   type StateSchema,
@@ -125,9 +127,10 @@ export interface ChatReply {
   steps: StepUpdate<ChatState>[];
 }
 
-/** 챗 그래프의 상태. `turns`는 루프 모양에서만 쓰인다. */
+/** 챗 그래프의 상태. `turns`는 루프, `tasks`는 분업 모양에서만 쓰인다. */
 interface ChatState extends MessagesState {
   turns: number;
+  tasks: string[];
 }
 
 const chatSchema: StateSchema<ChatState> = {
@@ -135,7 +138,7 @@ const chatSchema: StateSchema<ChatState> = {
   turns: { reducer: (a: number, b: number) => a + b },
 };
 
-export type ShapeId = "single" | "chain" | "parallel" | "loop";
+export type ShapeId = "single" | "chain" | "parallel" | "loop" | "dispatch";
 
 /**
  * 챗이 돌 수 있는 **그래프 모양들**.
@@ -171,18 +174,58 @@ export const SHAPES: Array<{ id: ShapeId; name: string; description: string; cal
       "model이 자기 자신을 가리키는 조건부 엣지(V5). 매 턴 이전 대화 전체가 실려 가고 messages가 누적된다.",
     calls: 2,
   },
+  {
+    id: "dispatch",
+    name: "분업 (Send 팬아웃)",
+    description:
+      "dispatch가 요청을 하위 작업 N개로 쪼개고, **각 워커가 자기 몫만** 받아 처리한다(V6 Send). 병렬과 다른 점: 병렬은 '같은 질문에 두 관점', 이건 '다른 작업을 각자 담당'이다. 워커 수는 런타임에 정해진다.",
+    calls: 3,
+  },
 ];
+
+/**
+ * 디스패처가 내놓은 텍스트에서 하위 작업 목록을 꺼낸다.
+ * 모델이 JSON을 안 줄 수 있으므로 **실패하면 통째로 하나**로 취급한다(조용히 죽지 않게).
+ */
+export function parseTasks(text: string, fallback: string): string[] {
+  const match = text.match(/\[[\s\S]*\]/);
+  if (match) {
+    try {
+      const parsed: unknown = JSON.parse(match[0]);
+      const items = Array.isArray(parsed)
+        ? parsed.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+        : [];
+      if (items.length > 0) return items.slice(0, 4); // 폭주 방지
+    } catch {
+      // 아래 폴백으로
+    }
+  }
+  return [fallback];
+}
 
 /** 모양 하나를 그래프로 세운다. `spec`이 없으면 노드가 없는 **구조만** 필요한 경우다. */
 export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?: string } = {}) {
   // spec이 없으면 그림용이다 — 진짜 모델 대신 자리표시자를 꽂는다(자격증명이 필요 없게).
-  const call =
+  const ask = async (msgs: BaseMessage[], sys: string) =>
     spec === undefined
-      ? async (_msgs: BaseMessage[], _nudge?: string) => ai("(미리보기)")
-      : async (msgs: BaseMessage[], nudge?: string) => {
-          const sys = [options.system, nudge].filter(Boolean).join("\n\n");
-          return model(spec, sys === "" ? {} : { system: sys }).invoke(msgs);
-        };
+      ? ai("(미리보기)")
+      : model(spec, sys === "" ? {} : { system: sys }).invoke(msgs);
+
+  /** **답변하는** 노드용. 사용자 System 프롬프트를 물려받는다. */
+  const call = (msgs: BaseMessage[], nudge?: string) =>
+    ask(msgs, [options.system, nudge].filter(Boolean).join("\n\n"));
+
+  /**
+   * **제어하는** 노드용(디스패처 등). 답변이 아니라 **계획**을 받아낸다.
+   *
+   * 두 가지를 답변 노드와 다르게 한다:
+   * 1. 사용자 System을 **안 물려받는다** — "두 문장 이내" 같은 답변 지시가 계획 형식과 충돌한다.
+   * 2. 지시를 **system이 아니라 사용자 턴에 넣는다.** Claude Code는 system을 바꿔도
+   *    "질문에 답한다"는 성향이 남아서, system에 "JSON만"이라고 적으면 잘 안 듣는다.
+   *    실측(3회씩): system에 지시 → JSON 1/3, 프롬프트에 지시 → **3/3**.
+   */
+  const plan = (instruction: string, subject: string) =>
+    ask([human(`${instruction}\n\n---\n요청: ${subject}`)], "");
 
   const g = new StateGraph<ChatState>(chatSchema);
 
@@ -209,10 +252,33 @@ export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?
     g.addEdge(START, "critical");
     g.addEdge("plain", END);
     g.addEdge("critical", END);
-  } else {
+  } else if (shape === "loop") {
     g.addNode("model", async (s) => ({ messages: [await call(s.messages)], turns: 1 }));
     g.addEdge(START, "model");
     g.addConditionalEdges("model", (s) => (s.turns < 2 ? "model" : END), ["model", END]);
+  } else {
+    // 분업: dispatch가 일을 쪼개고, Send가 **워커마다 다른 payload**를 실어 보낸다(V6).
+    // 병렬 모양과의 차이가 여기다 — 저긴 두 노드가 같은 s.messages를 읽는다.
+    g.addNode("dispatch", async (s) => {
+      const request = s.messages.at(-1)?.content ?? "";
+      const split = await plan(
+        "위 요청을 독립적으로 처리할 수 있는 하위 작업 2~3개로 쪼개라. " +
+          '설명 없이 JSON 문자열 배열로만 답하라. 예: ["A 조사", "B 조사"]',
+        request,
+      );
+      // 모델이 JSON을 안 줄 수도 있다 — 그때는 통째로 하나(조용히 죽지 않게).
+      return { tasks: parseTasks(split.content, request), turns: 1 };
+    });
+
+    // **워커는 상태 전체가 아니라 자기 작업만 받는다** — addNode<string>이 그 표시다.
+    g.addNode<string>("worker", async (task) => {
+      const answer = await call([human(task)], "맡은 작업만 간결하게 처리한다.");
+      return { messages: [ai(`[${task}]\n${answer.content}`)], turns: 1 };
+    });
+
+    g.addEdge(START, "dispatch");
+    g.addConditionalEdges("dispatch", (s) => s.tasks.map((t) => new Send("worker", t)), ["worker"]);
+    g.addEdge("worker", END);
   }
 
   return g.compile();
@@ -236,7 +302,7 @@ export async function chatTurn(
   );
 
   const steps: StepUpdate<ChatState>[] = [];
-  for await (const step of graph.stream({ messages: history, turns: 0 })) {
+  for await (const step of graph.stream({ messages: history, turns: 0, tasks: [] })) {
     steps.push(step);
   }
 
