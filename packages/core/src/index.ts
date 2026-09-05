@@ -16,14 +16,19 @@ export { Topic } from "./channels/topic";
 export { branchTo, END, joinTo, START, TASKS } from "./constants";
 export { EmptyChannelError, InvalidUpdateError } from "./errors";
 export type {
+  AIMessage,
+  BaseMessage,
   ChannelSpec,
+  HumanMessage,
+  MessagesState,
   NodeFn,
   NodeReturn,
   Router,
   RouteTarget,
   StateSchema,
+  SystemMessage,
 } from "./graph";
-export { Command, StateGraph } from "./graph";
+export { addMessages, ai, Command, human, messagesSchema, StateGraph, system } from "./graph";
 export type {
   BoundFn,
   ChannelSnapshot,

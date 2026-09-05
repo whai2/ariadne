@@ -4,6 +4,14 @@
 // `CompiledGraph`에 넘기고 끝. 반대 방향 import는 없다(불변식 3).
 
 export { Command } from "./command";
+export type {
+  AIMessage,
+  BaseMessage,
+  HumanMessage,
+  MessagesState,
+  SystemMessage,
+} from "./messages";
+export { addMessages, ai, human, messagesSchema, system } from "./messages";
 export { StateGraph } from "./stateGraph";
 export type {
   ChannelSpec,

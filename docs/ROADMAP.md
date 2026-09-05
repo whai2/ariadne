@@ -96,10 +96,11 @@ Bun + tsc + Biome + lefthook + CI. (커밋 `d0974fd`, `8b7b54c`)
 - **참조:** `pregel/_read.py`, `pregel/_write.py`, `pregel/_algo.py`(apply_writes·prepare_next_tasks·local_read), `graph/state.py:1509,1531,1551,1760`, `channels/{ephemeral_value,named_barrier_value,topic}.py`, `types.py`(Command).
 - **검증:** 회귀(V1~V6 예제 전부 통과) + `getChannelNames()`로 낮춘 구조 대응 + 새 채널 3종 단위 테스트. ([노트 11](notes/11-v7-pregel.md))
 
-### V8 · 캡스톤 — MessagesState + addMessages
+### V8 · 캡스톤 — MessagesState + addMessages — [x] 완료
 - **도는 것:** 교과서 챗봇형 그래프(모델 호출은 가짜 함수)에서 대화 상태가 메시지 리스트로 누적.
-- **내부:** 의존성 없는 최소 `BaseMessage`/`Human`/`AI` + `addMessages` 리듀서.
+- **내부:** 의존성 없는 최소 `BaseMessage`/`human`/`ai`/`system` + `addMessages` 리듀서(같은 id면 교체, 아니면 append). 새 엔진 기능 없음 — `messagesSchema`로 V3 리듀서 채널(`BinaryOperatorAggregate`)에 그대로 꽂힌다. 멀티턴은 V5 자기 루프로.
 - **참조:** `graph/message.py`.
+- **검증:** addMessages 단위 + 챗봇 누적 + 멀티턴 루프 + 채널 타입 대응. ([노트 12](notes/12-v8-messages.md))
 
 ---
 
