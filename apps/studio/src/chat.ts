@@ -5,12 +5,14 @@
 // (그게 이 스튜디오가 일반 챗 UI와 다른 점이다.)
 
 import {
+  ai,
   type BaseMessage,
   END,
   type MessagesState,
   messagesSchema,
   START,
   StateGraph,
+  type StateSchema,
   type StepUpdate,
 } from "@ariadne/core";
 import { listProviders, model, PROVIDERS } from "@ariadne/model";
@@ -117,14 +119,107 @@ export function providerList(
 }
 
 export interface ChatReply {
-  /** 새로 붙은 AI 메시지들(보통 하나). */
+  /** 새로 붙은 AI 메시지들. 모양에 따라 여럿일 수 있다(병렬은 둘). */
   messages: BaseMessage[];
   /** 그래프가 실제로 뭘 했는지 — 챗에서도 스텝·채널을 볼 수 있게. */
-  steps: StepUpdate<MessagesState>[];
+  steps: StepUpdate<ChatState>[];
+}
+
+/** 챗 그래프의 상태. `turns`는 루프 모양에서만 쓰인다. */
+interface ChatState extends MessagesState {
+  turns: number;
+}
+
+const chatSchema: StateSchema<ChatState> = {
+  ...messagesSchema,
+  turns: { reducer: (a: number, b: number) => a + b },
+};
+
+export type ShapeId = "single" | "chain" | "parallel" | "loop";
+
+/**
+ * 챗이 돌 수 있는 **그래프 모양들**.
+ *
+ * 대화 내용이 아니라 **엔진 개념**을 하나씩 보여주려고 골랐다. 같은 질문을 던져도
+ * 오른쪽 패널의 스텝 수와 병렬 여부가 달라지는 걸 눈으로 보라는 취지다.
+ */
+export const SHAPES: Array<{ id: ShapeId; name: string; description: string; calls: number }> = [
+  {
+    id: "single",
+    name: "단일 호출",
+    description: "START→model→END. 가장 단순한 모양. 스텝 1개.",
+    calls: 1,
+  },
+  {
+    id: "chain",
+    name: "초안 → 다듬기",
+    description:
+      "draft→revise. 모델을 두 번 부르는 **선형 다단계**. 스텝이 2개로 늘고, 두 번째 노드는 첫 번째의 출력을 이미 반영된 상태로 읽는다(BSP).",
+    calls: 2,
+  },
+  {
+    id: "parallel",
+    name: "병렬 두 관점",
+    description:
+      "START→{plain, critical}→END. 두 노드가 **한 슈퍼스텝에 병렬**로 돌고, 두 쓰기를 messages 리듀서가 합친다(V4). 패널에 'Step 0: plain · critical'로 뜬다.",
+    calls: 2,
+  },
+  {
+    id: "loop",
+    name: "자기 루프 (2턴)",
+    description:
+      "model이 자기 자신을 가리키는 조건부 엣지(V5). 매 턴 이전 대화 전체가 실려 가고 messages가 누적된다.",
+    calls: 2,
+  },
+];
+
+/** 모양 하나를 그래프로 세운다. `spec`이 없으면 노드가 없는 **구조만** 필요한 경우다. */
+export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?: string } = {}) {
+  // spec이 없으면 그림용이다 — 진짜 모델 대신 자리표시자를 꽂는다(자격증명이 필요 없게).
+  const call =
+    spec === undefined
+      ? async (_msgs: BaseMessage[], _nudge?: string) => ai("(미리보기)")
+      : async (msgs: BaseMessage[], nudge?: string) => {
+          const sys = [options.system, nudge].filter(Boolean).join("\n\n");
+          return model(spec, sys === "" ? {} : { system: sys }).invoke(msgs);
+        };
+
+  const g = new StateGraph<ChatState>(chatSchema);
+
+  if (shape === "single") {
+    g.addNode("model", async (s) => ({ messages: [await call(s.messages)], turns: 1 }));
+    g.addEdge(START, "model");
+    g.addEdge("model", END);
+  } else if (shape === "chain") {
+    g.addNode("draft", async (s) => ({ messages: [await call(s.messages)], turns: 1 }));
+    g.addNode("revise", async (s) => ({
+      messages: [await call(s.messages, "바로 앞 답변을 더 정확하고 간결하게 다시 쓴다.")],
+      turns: 1,
+    }));
+    g.addEdge(START, "draft");
+    g.addEdge("draft", "revise");
+    g.addEdge("revise", END);
+  } else if (shape === "parallel") {
+    g.addNode("plain", async (s) => ({ messages: [await call(s.messages)], turns: 1 }));
+    g.addNode("critical", async (s) => ({
+      messages: [await call(s.messages, "반대 관점이나 놓친 점을 지적한다.")],
+      turns: 1,
+    }));
+    g.addEdge(START, "plain");
+    g.addEdge(START, "critical");
+    g.addEdge("plain", END);
+    g.addEdge("critical", END);
+  } else {
+    g.addNode("model", async (s) => ({ messages: [await call(s.messages)], turns: 1 }));
+    g.addEdge(START, "model");
+    g.addConditionalEdges("model", (s) => (s.turns < 2 ? "model" : END), ["model", END]);
+  }
+
+  return g.compile();
 }
 
 /**
- * 한 턴 대화. **그래프로 돈다** — `START→model→END`에 messages 리듀서.
+ * 한 턴 대화. **그래프로 돈다.**
  *
  * 이력 전체를 매번 받는다(API가 stateless인 것과 같은 이유). 새로 생긴 메시지만
  * 골라 돌려주므로 클라이언트는 그걸 이어붙이면 된다.
@@ -132,17 +227,16 @@ export interface ChatReply {
 export async function chatTurn(
   spec: string,
   history: BaseMessage[],
-  options: { system?: string } = {},
+  options: { system?: string; shape?: ShapeId } = {},
 ): Promise<ChatReply> {
-  const m = model(spec, options.system === undefined ? {} : { system: options.system });
+  const graph = buildChatGraph(
+    options.shape ?? "single",
+    spec,
+    options.system === undefined ? {} : { system: options.system },
+  );
 
-  const g = new StateGraph<MessagesState>(messagesSchema);
-  g.addNode("model", async (s) => ({ messages: [await m.invoke(s.messages)] }));
-  g.addEdge(START, "model");
-  g.addEdge("model", END);
-
-  const steps: StepUpdate<MessagesState>[] = [];
-  for await (const step of g.compile().stream({ messages: history })) {
+  const steps: StepUpdate<ChatState>[] = [];
+  for await (const step of graph.stream({ messages: history, turns: 0 })) {
     steps.push(step);
   }
 

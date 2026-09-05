@@ -83,6 +83,9 @@ export const PAGE = `<!doctype html>
       </div>
     </div>
     <div class="need" id="need"></div>
+    <div class="lbl">Graph</div>
+    <select id="shape" style="margin-bottom:4px"></select>
+    <p id="shapeDesc" class="muted" style="margin:0 0 10px"></p>
     <div class="lbl">System (선택)</div>
     <input id="system" placeholder="예: 간결하게 한국어로 답한다." style="margin-bottom:10px" />
 
@@ -97,7 +100,7 @@ export const PAGE = `<!doctype html>
 
   <section>
     <h2>이번 턴에 엔진이 한 일</h2>
-    <div id="chatgraph" class="muted">대화를 시작하면 그래프가 뜬다.</div>
+    <div id="chatgraph" class="muted">모양을 고르면 그래프가 뜬다.</div>
     <div id="chatsteps"></div>
   </section>
 </main>
@@ -216,6 +219,40 @@ export const PAGE = `<!doctype html>
     onProviderChange();
   }
 
+  var SHAPES = [];
+
+  function currentShape() {
+    return document.getElementById("shape").value || "single";
+  }
+
+  async function drawChatGraph() {
+    var box = document.getElementById("chatgraph");
+    var graph = await (await fetch("/api/chat/graph?shape=" + encodeURIComponent(currentShape()))).json();
+    if (graph.error) { box.innerHTML = "<div class='err'>" + esc(graph.error) + "</div>"; return; }
+    if (!MERMAID) { box.innerHTML = "<pre>" + esc(toMermaid(graph)) + "</pre>"; return; }
+    var out = await mermaid.render("cg" + (++renderSeq), toMermaid(graph));
+    box.innerHTML = out.svg;
+  }
+
+  async function onShapeChange() {
+    var sh = SHAPES.find(function (x) { return x.id === currentShape(); });
+    var d = document.getElementById("shapeDesc");
+    // 모델을 여러 번 부르는 모양은 그만큼 오래 걸린다 — 미리 알려준다.
+    d.textContent = sh ? sh.description + " (모델 호출 " + sh.calls + "회)" : "";
+    await drawChatGraph();
+  }
+
+  async function loadShapes() {
+    try { SHAPES = await (await fetch("/api/shapes")).json(); }
+    catch (e) { fatal("그래프 모양 목록을 못 불러왔다: " + e); return; }
+    var sel = document.getElementById("shape");
+    sel.innerHTML = SHAPES.map(function (x) {
+      return "<option value='" + x.id + "'>" + esc(x.name) + "</option>";
+    }).join("");
+    sel.addEventListener("change", onShapeChange);
+    await onShapeChange();
+  }
+
   function renderLog(pending) {
     var box = document.getElementById("log");
     var html = convo.map(function (m) {
@@ -252,6 +289,7 @@ export const PAGE = `<!doctype html>
         body: JSON.stringify({
           spec: p.id + "/" + modelId,
           messages: convo,
+          shape: currentShape(),
           system: document.getElementById("system").value.trim() || undefined,
         }),
       })).json();
@@ -270,11 +308,6 @@ export const PAGE = `<!doctype html>
     convo = convo.concat(res.messages);
     renderLog(false);
     out.innerHTML = stepsHtml(res.steps);
-    if (MERMAID && !document.querySelector("#chatgraph svg")) {
-      var g = await mermaid.render("cg" + (++renderSeq),
-        "graph TD\\n  s[\\"START\\"] --> model[\\"model\\"]\\n  model --> e[\\"END\\"]");
-      document.getElementById("chatgraph").innerHTML = g.svg;
-    }
   }
 
   document.getElementById("send").addEventListener("click", send);
@@ -354,6 +387,7 @@ export const PAGE = `<!doctype html>
 
   renderLog(false);
   loadProviders();
+  loadShapes();
 </script>
 </body>
 </html>`;

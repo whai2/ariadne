@@ -1,5 +1,5 @@
 import type { BaseMessage, CompiledGraph, StepUpdate } from "@ariadne/core";
-import { chatTurn, providerList } from "./chat";
+import { buildChatGraph, chatTurn, providerList, SHAPES, type ShapeId } from "./chat";
 import type { Example } from "./examples";
 import { PAGE } from "./page";
 
@@ -17,7 +17,9 @@ export interface Studio {
  * 최소 스튜디오. 두 가지를 한다 — **대화**와 **관찰**.
  * - GET  /               → 브라우저 UI(HTML)
  * - GET  /api/providers  → 프로바이더 드롭다운(어느 게 지금 쓸 수 있는지까지)
- * - POST /api/chat       → { spec, messages, system } 한 턴 대화 (그래프로 돈다)
+ * - GET  /api/shapes     → 챗이 돌 수 있는 그래프 모양들
+ * - GET  /api/chat/graph?shape → 그 모양의 구조(보내기 전에 그림을 볼 수 있게)
+ * - POST /api/chat       → { spec, messages, system, shape } 한 턴 대화 (그래프로 돈다)
  * - GET  /api/examples   → 예제 목록
  * - GET  /api/graph?id   → 그 예제의 구조(getGraph)
  * - POST /api/run        → { id, input }으로 stream을 돌려 스텝별 상태/채널 반환
@@ -61,8 +63,21 @@ export function createStudio(examples: Example[]): Studio {
         return Response.json(providerList());
       }
 
+      if (req.method === "GET" && url.pathname === "/api/shapes") {
+        return Response.json(SHAPES);
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/chat/graph") {
+        const shape = (url.searchParams.get("shape") ?? "single") as ShapeId;
+        if (!SHAPES.some((s) => s.id === shape)) {
+          return Response.json({ error: `모르는 모양: ${shape}` }, { status: 400 });
+        }
+        // spec 없이 부른다 — 구조만 필요하므로 자격증명이 없어도 그림이 나온다.
+        return Response.json(buildChatGraph(shape).getGraph());
+      }
+
       if (req.method === "POST" && url.pathname === "/api/chat") {
-        let body: { spec?: string; messages?: BaseMessage[]; system?: string };
+        let body: { spec?: string; messages?: BaseMessage[]; system?: string; shape?: ShapeId };
         try {
           body = (await req.json()) as typeof body;
         } catch {
@@ -75,11 +90,10 @@ export function createStudio(examples: Example[]): Studio {
           // 모델 생성 실패(키 없음)와 호출 실패를 같은 자리에서 잡는다 —
           // 둘 다 사용자가 고칠 수 있는 것이라 메시지를 그대로 보여준다.
           return Response.json(
-            await chatTurn(
-              body.spec,
-              body.messages,
-              body.system === undefined ? {} : { system: body.system },
-            ),
+            await chatTurn(body.spec, body.messages, {
+              ...(body.system === undefined ? {} : { system: body.system }),
+              ...(body.shape === undefined ? {} : { shape: body.shape }),
+            }),
           );
         } catch (e) {
           return Response.json({ error: describe(e) }, { status: 500 });

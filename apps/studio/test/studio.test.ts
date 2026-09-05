@@ -359,3 +359,70 @@ describe("조건부 엣지가 그림에 나온다 (path_map)", () => {
     expect(html).toContain('e.kind === "conditional" ? " -.-> " : " --> "');
   });
 });
+
+describe("챗 그래프 모양 선택", () => {
+  async function shapeGraph(shape: string) {
+    return (await (
+      await studio.fetch(new Request(`http://x/api/chat/graph?shape=${shape}`))
+    ).json()) as { nodes: string[]; edges: Array<{ from: string; to: string; kind?: string }> };
+  }
+
+  it("GET /api/shapes — 모양 목록과 호출 횟수(느린 이유)를 준다", async () => {
+    const list = (await (await studio.fetch(new Request("http://x/api/shapes"))).json()) as Array<{
+      id: string;
+      calls: number;
+    }>;
+    expect(list.map((s) => s.id)).toEqual(["single", "chain", "parallel", "loop"]);
+    for (const s of list) expect(s.calls).toBeGreaterThan(0);
+  });
+
+  it("**자격증명 없이도** 구조를 그릴 수 있다 — 보내기 전에 모양을 본다", async () => {
+    // spec 없이 빌드하므로 키가 없어도 그림이 나온다. 이게 미리보기의 전제다.
+    expect((await shapeGraph("single")).nodes).toEqual(["model"]);
+  });
+
+  it("모양마다 구조가 실제로 다르다", async () => {
+    expect((await shapeGraph("chain")).nodes).toEqual(["draft", "revise"]);
+
+    // 병렬: START에서 두 갈래 — 한 슈퍼스텝에 같이 돈다(V4).
+    const par = await shapeGraph("parallel");
+    expect(
+      par.edges
+        .filter((e) => e.from === "__start__")
+        .map((e) => e.to)
+        .sort(),
+    ).toEqual(["critical", "plain"]);
+
+    // 루프: 자기 자신으로 가는 조건부 엣지(V5) — S6 덕에 그림에 나온다.
+    const loop = await shapeGraph("loop");
+    expect(loop.edges).toContainEqual({ from: "model", to: "model", kind: "conditional" });
+  });
+
+  it("모르는 모양은 400", async () => {
+    const res = await studio.fetch(new Request("http://x/api/chat/graph?shape=없는모양"));
+    expect(res.status).toBe(400);
+  });
+});
+
+describe.skipIf(!hasCli)("모양별 실제 실행 (구독 자격증명)", () => {
+  it("병렬은 **한 스텝에 두 노드**가 돌고 리듀서가 합친다", async () => {
+    const res = (await (
+      await studio.fetch(
+        new Request("http://x/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            spec: "claude-code/sonnet",
+            shape: "parallel",
+            system: "한 문장으로.",
+            messages: [{ role: "human", content: "1+1은?" }],
+          }),
+        }),
+      )
+    ).json()) as { messages: unknown[]; steps: Array<{ step: number; nodes: string[] }> };
+
+    expect(res.steps).toHaveLength(1); // 순차였다면 2였을 것
+    expect(res.steps[0]?.nodes.sort()).toEqual(["critical", "plain"]);
+    expect(res.messages).toHaveLength(2); // 두 쓰기가 messages 리듀서로 합쳐졌다
+  }, 180_000);
+});
