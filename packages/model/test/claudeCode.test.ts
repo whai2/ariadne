@@ -60,23 +60,35 @@ describe("toPrompt — 대화를 한 덩어리로 직렬화", () => {
   });
 });
 
-describe("buildArgs — 에이전트를 단발 텍스트로 좁히는 인자", () => {
-  test("print 모드 + JSON 출력 + 내장 툴 전면 차단", () => {
+describe("buildArgs — 하네스를 걷어내는 인자", () => {
+  test("툴을 **제거**한다 — 거부만 하면 정의가 컨텍스트에 남는다", () => {
     const args = buildArgs({});
     expect(args).toContain("-p");
     expect(args.join(" ")).toContain("--output-format json");
-    // 파일·셸을 만질 이유가 없다. 우리는 텍스트만 원한다.
-    const blocked = args[args.indexOf("--disallowed-tools") + 1] ?? "";
-    for (const t of ["Bash", "Read", "Write", "Edit", "WebSearch"]) expect(blocked).toContain(t);
+
+    // 여기가 핵심. --disallowed-tools는 실행만 막고 정의는 남긴다(측정: 10,093 토큰).
+    // --tools "" 는 컨텍스트에서 뺀다(7,286 → system 프롬프트까지 주면 923).
+    expect(args).toContain("--tools");
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
+    expect(args).not.toContain("--disallowed-tools");
+
+    expect(args).toContain("--disable-slash-commands"); // 스킬
+    expect(args).toContain("--strict-mcp-config"); // MCP
+    expect(args).toContain("--no-session-persistence"); // 단발이라 세션 파일 불필요
   });
 
-  test("model·system은 있을 때만 붙는다", () => {
+  test("**system 프롬프트는 항상 넘긴다** — 없으면 프리셋이 붙어 격리가 무너진다", () => {
+    const bare = buildArgs({});
+    expect(bare).toContain("--system-prompt");
+    expect(bare[bare.indexOf("--system-prompt") + 1]).not.toBe("");
+
+    const given = buildArgs({ system: "간결하게" });
+    expect(given[given.indexOf("--system-prompt") + 1]).toBe("간결하게");
+  });
+
+  test("model은 있을 때만 붙는다", () => {
     expect(buildArgs({}).join(" ")).not.toContain("--model");
-    expect(buildArgs({ model: "sonnet", system: "간결하게" }).join(" ")).toContain(
-      "--model sonnet",
-    );
-    // 프리셋을 덮어써 Claude Code 페르소나를 걷어낸다.
-    expect(buildArgs({ system: "간결하게" })).toContain("--system-prompt");
+    expect(buildArgs({ model: "sonnet" }).join(" ")).toContain("--model sonnet");
   });
 });
 

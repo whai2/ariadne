@@ -37,19 +37,35 @@ export interface ClaudeCodeResult {
  */
 export type RunCli = (args: string[], input: string, signal?: AbortSignal) => Promise<string>;
 
-/** 내장 툴을 전부 막는다 — 우리는 텍스트만 원하고, 파일/셸을 만질 이유가 없다. */
-const BLOCKED_TOOLS = [
-  "Bash",
-  "Read",
-  "Write",
-  "Edit",
-  "Glob",
-  "Grep",
-  "WebFetch",
-  "WebSearch",
-  "Task",
-  "NotebookEdit",
+/**
+ * 하네스를 걷어내는 인자들. **측정으로 고른 것이다**(프롬프트 토큰, 캐시 워밍 후 2회차):
+ *
+ * ```
+ * 기본                                    18,040
+ * --disallowed-tools ...                 10,093   ← 거부만 하지 제거는 안 한다
+ * --tools ""                              7,286   ← 툴 정의를 컨텍스트에서 뺀다
+ *   + --disable-slash-commands            7,286
+ *   + --system-prompt                       923   ← 프리셋 대체가 여기서 비로소 효과
+ * ```
+ *
+ * `--disallowed-tools`로는 안 된다는 게 핵심이다 — 그건 실행을 막을 뿐 정의는 남는다.
+ * `--bare`가 더 강하지만 **구독 자격증명을 안 읽는다**(`Not logged in`)이라 못 쓴다.
+ */
+const ISOLATION = [
+  "--tools",
+  "", // 내장 툴을 컨텍스트에서 **제거**한다(거부가 아니라)
+  "--disable-slash-commands", // 스킬 비활성
+  "--strict-mcp-config", // --mcp-config가 없으므로 MCP를 하나도 안 붙인다
+  "--no-session-persistence", // 단발 호출이라 세션 파일을 남길 이유가 없다
 ];
+
+/**
+ * 시스템 프롬프트를 안 줬을 때 쓰는 기본값.
+ *
+ * **빈 값으로 두면 안 된다.** `--system-prompt`가 없으면 Claude Code의 코딩 어시스턴트
+ * 프리셋이 그대로 붙어(위 표의 7,286) 지시가 그 안에 묻힌다.
+ */
+const NEUTRAL_SYSTEM = "You are a helpful assistant. Answer the user directly.";
 
 export interface ClaudeCodeConfig {
   /** 모델 별칭(`opus`·`sonnet`) 또는 전체 ID. 생략하면 CLI 기본값. */
@@ -106,11 +122,11 @@ export function buildArgs(opts: { model?: string; system?: string }): string[] {
     "-p", // print 모드: 한 번 답하고 종료
     "--output-format",
     "json", // result 객체 하나
-    "--disallowed-tools",
-    BLOCKED_TOOLS.join(" "),
+    ...ISOLATION,
     ...(opts.model === undefined ? [] : ["--model", opts.model]),
-    // 프리셋을 덮어써 Claude Code 페르소나를 걷어낸다(없으면 CLI 기본값이 붙는다).
-    ...(opts.system === undefined ? [] : ["--system-prompt", opts.system]),
+    // **항상** 넘긴다 — 없으면 프리셋이 붙어 격리가 무너진다.
+    "--system-prompt",
+    opts.system ?? NEUTRAL_SYSTEM,
   ];
 }
 

@@ -218,14 +218,14 @@ export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?
   /**
    * **제어하는** 노드용(디스패처 등). 답변이 아니라 **계획**을 받아낸다.
    *
-   * 두 가지를 답변 노드와 다르게 한다:
-   * 1. 사용자 System을 **안 물려받는다** — "두 문장 이내" 같은 답변 지시가 계획 형식과 충돌한다.
-   * 2. 지시를 **system이 아니라 사용자 턴에 넣는다.** Claude Code는 system을 바꿔도
-   *    "질문에 답한다"는 성향이 남아서, system에 "JSON만"이라고 적으면 잘 안 듣는다.
-   *    실측(3회씩): system에 지시 → JSON 1/3, 프롬프트에 지시 → **3/3**.
+   * 사용자 System을 **안 물려받는다** — "두 문장 이내" 같은 답변 지시가 계획 형식과
+   * 충돌해 실제로 계획이 깨졌다.
+   *
+   * (한때는 지시를 사용자 턴에 넣어야 먹혔다. claude-code 어댑터가 하네스 컨텍스트를
+   * 1만 토큰이나 싣고 있어 지시가 묻혔기 때문인데, `--tools ""`로 격리한 뒤로는
+   * system에 넣어도 3/3으로 듣는다. 증상이 아니라 원인이 고쳐졌으므로 되돌렸다.)
    */
-  const plan = (instruction: string, subject: string) =>
-    ask([human(`${instruction}\n\n---\n요청: ${subject}`)], "");
+  const plan = (instruction: string, subject: string) => ask([human(subject)], instruction);
 
   const g = new StateGraph<ChatState>(chatSchema);
 
