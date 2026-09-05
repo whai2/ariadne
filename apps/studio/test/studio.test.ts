@@ -99,6 +99,35 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(steps.at(-1)?.state.n).toBe(3);
   });
 
+  it("react 예제는 model⇄tool 루프 후 종료하며 메시지가 누적된다", async () => {
+    const { steps } = (await (
+      await run("react", { messages: [{ role: "human", content: "2+2 계산해줘" }] })
+    ).json()) as {
+      steps: Array<{ nodes: string[]; state: { messages: Array<{ content: string }> } }>;
+    };
+    expect(steps.map((s) => s.nodes)).toEqual([["model"], ["tool"], ["model"]]);
+    expect(steps.at(-1)?.state.messages.map((m) => m.content)).toEqual([
+      "2+2 계산해줘",
+      "도구호출: calc",
+      "도구결과: 4",
+      "답: 4",
+    ]);
+  });
+
+  it("rag 예제는 retrieve→summarize×N(동적)→generate로 돈다", async () => {
+    const { steps } = (await (
+      await run("rag", { query: "AI란?", docs: [], summaries: [], answer: "" })
+    ).json()) as {
+      steps: Array<{ nodes: string[]; state: { answer: string } }>;
+    };
+    expect(steps.map((s) => s.nodes)).toEqual([
+      ["retrieve"],
+      ["summarize", "summarize", "summarize"],
+      ["generate"],
+    ]);
+    expect(steps.at(-1)?.state.answer).toContain("답변:");
+  });
+
   it("잘못된 JSON은 400, 모르는 경로는 404", async () => {
     const bad = await studio.fetch(
       new Request("http://x/api/run", { method: "POST", body: "nope" }),

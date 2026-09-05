@@ -1,4 +1,16 @@
-import { type CompiledGraph, END, START, StateGraph, type StateSchema } from "@ariadne/core";
+import {
+  ai,
+  type CompiledGraph,
+  END,
+  human,
+  type MessagesState,
+  messagesSchema,
+  Send,
+  START,
+  StateGraph,
+  type StateSchema,
+  system,
+} from "@ariadne/core";
 
 /** 스튜디오가 고를 수 있는 예제 하나. 타입은 지우고(런타임 데모) 이름/설명/샘플입력을 곁들인다. */
 export interface Example {
@@ -226,5 +238,51 @@ export const examples: Example[] = [
       g.addEdge("s4", "s5");
       g.addEdge("s5", END);
     },
+  ),
+
+  example<MessagesState>(
+    {
+      id: "react",
+      name: "ReAct 에이전트 루프",
+      description:
+        "model ⇄ tool 반복 후 종료. model이 조건부로 tool을 부르고(V5 루프), tool 결과를 들고 다시 model로. messages가 누적(V8). 실제 LLM/툴은 가짜 — 에이전트의 교과서 골격. (조건/루프 엣지는 그래프 그림엔 안 보이고 Run 스텝으로 관찰)",
+      sampleInput: { messages: [human("2+2 계산해줘")] },
+    },
+    (g) => {
+      // 가짜 모델: 도구결과가 있으면 최종 답, 없으면 도구 호출
+      g.addNode("model", (s) => {
+        const hasToolResult = s.messages.some((m) => m.content.startsWith("도구결과:"));
+        return hasToolResult ? { messages: [ai("답: 4")] } : { messages: [ai("도구호출: calc")] };
+      });
+      g.addNode("tool", () => ({ messages: [system("도구결과: 4")] })); // 가짜 툴
+      g.addEdge(START, "model");
+      g.addConditionalEdges("model", (s) =>
+        s.messages.at(-1)?.content.startsWith("도구호출:") ? "tool" : END,
+      );
+      g.addEdge("tool", "model"); // 도구 결과 들고 다시 model로 (루프)
+    },
+    messagesSchema,
+  ),
+
+  example<{ query: string; docs: string[]; summaries: string[]; answer: string }>(
+    {
+      id: "rag",
+      name: "RAG (map-reduce)",
+      description:
+        "retrieve → 검색 문서 N개를 Send로 병렬 요약(V6) → 리듀서로 취합 → generate. 문서 개수는 런타임에 결정된다. 실제 LLM/검색은 가짜. (Send 팬아웃은 그림엔 안 보이고 Run에서 'summarize ×N'으로 관찰)",
+      sampleInput: { query: "AI란?", docs: [], summaries: [], answer: "" },
+    },
+    (g) => {
+      g.addNode("retrieve", (s) => ({
+        docs: [`${s.query} 문서1`, `${s.query} 문서2`, `${s.query} 문서3`],
+      }));
+      g.addNode<string>("summarize", (doc) => ({ summaries: [`요약(${doc})`] }));
+      g.addNode("generate", (s) => ({ answer: `답변: ${s.summaries.join(" / ")}` }));
+      g.addEdge(START, "retrieve");
+      g.addConditionalEdges("retrieve", (s) => s.docs.map((d) => new Send("summarize", d)));
+      g.addEdge("summarize", "generate"); // N개의 summarize가 generate로 팬인
+      g.addEdge("generate", END);
+    },
+    { summaries: { reducer: (a, b) => [...a, ...b] } },
   ),
 ];
