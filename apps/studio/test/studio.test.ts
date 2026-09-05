@@ -426,3 +426,14 @@ describe.skipIf(!hasCli)("모양별 실제 실행 (구독 자격증명)", () => 
     expect(res.messages).toHaveLength(2); // 두 쓰기가 messages 리듀서로 합쳐졌다
   }, 180_000);
 });
+
+describe("UI 문구가 실제 동작과 어긋나지 않는다", () => {
+  it("모양이 여러 개인데 특정 모양을 단정하지 않는다", async () => {
+    // S7 전엔 챗이 START→model→END 하나였고 문구도 그렇게 적혀 있었다.
+    // 모양을 고를 수 있게 된 뒤에도 그 문구가 남아, 병렬을 골라도 "START→model→END"라고
+    // 우겼다. 그림과 설명이 어긋나면 관찰 도구로서 실격이다.
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    const footer = html.slice(html.indexOf("대화도"), html.indexOf("대화도") + 200);
+    expect(footer).not.toContain("START→model→END");
+  });
+});

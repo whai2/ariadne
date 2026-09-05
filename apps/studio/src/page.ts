@@ -94,7 +94,7 @@ export const PAGE = `<!doctype html>
       <textarea id="say" rows="2" placeholder="메시지를 입력하고 Enter (Shift+Enter 줄바꿈)"></textarea>
       <button id="send">보내기</button>
     </div>
-    <p class="muted">대화도 <b>그래프로 돈다</b> — START→model→END에 messages 리듀서(V8). 오른쪽에서 실제 스텝과 채널을 볼 수 있다.</p>
+    <p class="muted">대화도 <b>그래프로 돈다</b> — 위에서 고른 모양 그대로. 오른쪽에서 실제 스텝과 채널을 볼 수 있다.</p>
     <p style="margin-top:8px"><button id="reset" style="background:#eee;color:#333">대화 비우기</button></p>
   </section>
 
