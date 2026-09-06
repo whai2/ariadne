@@ -10,8 +10,19 @@ export type {
   HumanMessage,
   MessagesState,
   SystemMessage,
+  ToolCall,
+  ToolMessage,
 } from "./messages";
-export { addMessages, ai, human, messagesSchema, system } from "./messages";
+export {
+  addMessages,
+  ai,
+  human,
+  isAIMessage,
+  isToolMessage,
+  messagesSchema,
+  system,
+  tool,
+} from "./messages";
 export { StateGraph } from "./stateGraph";
 export type {
   ChannelSpec,

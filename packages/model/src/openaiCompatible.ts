@@ -8,10 +8,17 @@
 //   Anthropic  system을 대화 밖 최상위 파라미터로 뽑아낸다
 //   OpenAI     system이 **대화 배열 안에 그대로 산다**  ← 아래 toOpenAIMessages
 
-import { type AIMessage, ai, type BaseMessage } from "@ariadne/core";
+import {
+  type AIMessage,
+  ai,
+  type BaseMessage,
+  isAIMessage,
+  isToolMessage,
+  type ToolCall,
+} from "@ariadne/core";
 import OpenAI from "openai";
 import { EmptyConversationError } from "./errors";
-import type { ChatModel, ChatOptions } from "./types";
+import type { ChatModel, ChatOptions, ToolSpec } from "./types";
 
 /** 기본 응답 상한. 비스트리밍 요청이 HTTP 타임아웃에 걸리지 않는 선. */
 const DEFAULT_MAX_TOKENS = 16_000;
@@ -40,17 +47,87 @@ export interface OpenAICompatibleConfig {
 /**
  * core 메시지 → OpenAI 와이어 포맷. **순수 함수.**
  *
- * Anthropic과 달리 **뽑아낼 게 없다** — system도 그냥 배열 안의 한 원소다.
- * 역할 이름만 바꾸면 끝: human → user, ai → assistant, system → system.
+ * Anthropic과 달리 **뽑아낼 것도 접을 것도 없다** — system도 tool 결과도 그냥 배열 안의
+ * 한 원소다. 그래서 이 함수는 끝까지 **1:1 map**으로 남는다. 툴 결과의 묶음 단위가
+ * 두 포맷이 갈리는 지점이라는 게 여기서 눈에 보인다(anthropic.ts의 flushResults와 대조).
+ *
+ * 대신 이쪽이 흡수하는 비대칭이 따로 있다: **인자가 JSON 문자열이다.**
  */
 export function toOpenAIMessages(
   messages: BaseMessage[],
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   return messages.map((msg) => {
     if (msg.role === "system") return { role: "system", content: msg.content };
+    if (isToolMessage(msg)) {
+      // 독립 메시지다 — Anthropic처럼 user 메시지 안의 블록이 아니다.
+      // 실패 표시 자리가 없어서(`is_error` 같은 게 없다) 본문에 적어 보낸다.
+      return {
+        role: "tool",
+        tool_call_id: msg.toolCallId,
+        content: msg.status === "error" ? `Error: ${msg.content}` : msg.content,
+      };
+    }
+    if (isAIMessage(msg) && msg.toolCalls !== undefined && msg.toolCalls.length > 0) {
+      return {
+        role: "assistant",
+        // tool_calls가 있으면 content는 null이어도 된다(문서가 명시).
+        content: msg.content === "" ? null : msg.content,
+        tool_calls: msg.toolCalls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          // 파싱된 객체에서 나온 것이라 이 stringify는 절대 안 터진다.
+          function: { name: call.name, arguments: JSON.stringify(call.args) },
+        })),
+      };
+    }
     if (msg.role === "ai") return { role: "assistant", content: msg.content };
     return { role: "user", content: msg.content };
   });
+}
+
+/**
+ * 응답의 tool_calls → 중립 `ToolCall[]`. **여기가 두 포맷이 만나는 지점이다.**
+ *
+ * OpenAI는 인자를 **JSON 문자열**로 준다. 그런데 SDK 문서가 대놓고 경고한다 —
+ * "모델이 항상 유효한 JSON을 만들지는 않는다." 그래서 파싱 실패는 예외가 아니라 **데이터**로
+ * 다룬다: 원문을 `invalidArgs`에 실어 보내면, 실행기가 "스키마 위반"과 "JSON 파손"을
+ * 구분해서 모델에게 말해줄 수 있다. 여기서 던지면 그 구분이 영영 사라진다.
+ */
+export function toolCallsFrom(message: OpenAI.Chat.Completions.ChatCompletionMessage): ToolCall[] {
+  const calls: ToolCall[] = [];
+  for (const call of message.tool_calls ?? []) {
+    if (call.type !== "function") continue; // custom 툴은 우리가 안 보낸다
+    const raw = call.function.arguments;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw === "" ? "{}" : raw);
+    } catch {
+      calls.push({ id: call.id, name: call.function.name, args: {}, invalidArgs: raw });
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      calls.push({ id: call.id, name: call.function.name, args: {}, invalidArgs: raw });
+      continue;
+    }
+    calls.push({
+      id: call.id,
+      name: call.function.name,
+      args: parsed as Record<string, unknown>,
+    });
+  }
+  return calls;
+}
+
+/** 중립 툴 선언 → OpenAI `tools`. 한 겹 더 감싸는 것(`function`) 말고는 같다. */
+export function toOpenAITools(specs: ToolSpec[]): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return specs.map((spec) => ({
+    type: "function",
+    function: {
+      name: spec.name,
+      ...(spec.description === undefined ? {} : { description: spec.description }),
+      parameters: spec.parameters,
+    },
+  }));
 }
 
 /**
@@ -75,10 +152,13 @@ export function openaiCompatible(config: OpenAICompatibleConfig): ChatModel {
   return {
     provider: config.provider ?? "openai",
     modelId: config.model,
+    supportsTools: true,
 
     async invoke(messages: BaseMessage[], options: ChatOptions = {}): Promise<AIMessage> {
       const converted = toOpenAIMessages(messages);
-      if (converted.every((m) => m.role === "system")) {
+      // tool도 "보낼 턴"으로 안 친다 — 앞선 assistant의 tool_calls 없이 홀로 있는 tool 결과는
+      // 서버가 400으로 거절한다. 역할이 늘면서 이 가드가 새로 놓치던 자리다.
+      if (converted.every((m) => m.role === "system" || m.role === "tool")) {
         throw new EmptyConversationError();
       }
 
@@ -97,12 +177,20 @@ export function openaiCompatible(config: OpenAICompatibleConfig): ChatModel {
           model: config.model,
           max_tokens: options.maxTokens ?? defaultMaxTokens,
           messages: [...prefix, ...converted],
+          ...(options.tools === undefined || options.tools.length === 0
+            ? {}
+            : { tools: toOpenAITools(options.tools) }),
         },
         options.signal === undefined ? undefined : { signal: options.signal },
       );
 
       // id를 실어 보낸다 → addMessages가 같은 id를 교체로 처리한다(V8).
-      return ai(response.choices[0]?.message.content ?? "", response.id);
+      const message = response.choices[0]?.message;
+      return ai(
+        message?.content ?? "",
+        response.id,
+        message === undefined ? undefined : toolCallsFrom(message),
+      );
     },
   };
 }

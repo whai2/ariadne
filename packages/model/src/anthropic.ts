@@ -8,9 +8,16 @@
 // 같은 포맷의 엔드포인트를 내므로, `baseURL`만 바꾸면 그대로 쓰인다(→ registry.ts).
 
 import Anthropic from "@anthropic-ai/sdk";
-import { type AIMessage, ai, type BaseMessage } from "@ariadne/core";
+import {
+  type AIMessage,
+  ai,
+  type BaseMessage,
+  isAIMessage,
+  isToolMessage,
+  type ToolCall,
+} from "@ariadne/core";
 import { EmptyConversationError, ModelRefusalError } from "./errors";
-import type { ChatModel, ChatOptions } from "./types";
+import type { ChatModel, ChatOptions, ToolSpec } from "./types";
 
 /** 기본 모델. */
 const DEFAULT_MODEL = "claude-opus-5";
@@ -46,10 +53,13 @@ export interface AnthropicChatConfig {
 /**
  * core 메시지 → Anthropic 와이어 포맷. **순수 함수** — 네트워크도 상태도 없다.
  *
- * 번역이 필요한 지점이 정확히 둘이다:
+ * F1은 "번역이 필요한 지점이 정확히 둘"이라고 적었다. F2에서 **셋째가 생겼다.**
  * 1. **역할 이름이 다르다.** human → user, ai → assistant.
  * 2. **system의 위치가 다르다.** core에선 대화 리스트 안의 한 메시지지만,
  *    Anthropic에선 대화와 **분리된 최상위 파라미터**다. 그래서 뽑아내야 한다.
+ * 3. **툴 결과의 묶음 단위가 다르다.** 우리는 "결과 1개 = 메시지 1개"인데 Anthropic은
+ *    한 턴의 결과 전부를 **user 메시지 하나의 블록들**로 받는다. 그래서 연속한 tool
+ *    메시지 런을 접어야 한다 — 이 함수가 처음으로 **메시지 개수를 바꾼다.**
  *
  * 같은 역할이 연달아 와도 그대로 둔다 — API가 알아서 한 턴으로 합친다.
  */
@@ -59,13 +69,43 @@ export function toAnthropicMessages(messages: BaseMessage[]): {
 } {
   const system: string[] = [];
   const converted: Anthropic.MessageParam[] = [];
+  // 연속한 tool 메시지를 모았다가 user 메시지 하나로 낸다.
+  let results: Anthropic.ToolResultBlockParam[] = [];
+  const flushResults = () => {
+    if (results.length === 0) return;
+    converted.push({ role: "user", content: results });
+    results = [];
+  };
+
   for (const msg of messages) {
+    // system은 대화에서 통째로 빠지므로 런을 끊지 않는다(있으나 없으나 같아야 한다).
     if (msg.role === "system") {
       system.push(msg.content);
-    } else {
-      converted.push({ role: msg.role === "human" ? "user" : "assistant", content: msg.content });
+      continue;
     }
+    if (isToolMessage(msg)) {
+      results.push({
+        type: "tool_result",
+        tool_use_id: msg.toolCallId,
+        content: msg.content,
+        ...(msg.status === "error" ? { is_error: true } : {}),
+      });
+      continue;
+    }
+    flushResults();
+    if (isAIMessage(msg) && msg.toolCalls !== undefined && msg.toolCalls.length > 0) {
+      // content가 빈 문자열이면 text 블록을 **안 만든다** — 빈 text 블록은 400이다.
+      const blocks: Anthropic.ContentBlockParam[] = [];
+      if (msg.content !== "") blocks.push({ type: "text", text: msg.content });
+      for (const call of msg.toolCalls) {
+        blocks.push({ type: "tool_use", id: call.id, name: call.name, input: call.args });
+      }
+      converted.push({ role: "assistant", content: blocks });
+      continue;
+    }
+    converted.push({ role: msg.role === "human" ? "user" : "assistant", content: msg.content });
   }
+  flushResults();
   return { system, messages: converted };
 }
 
@@ -75,6 +115,31 @@ export function extractText(message: Anthropic.Message): string {
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
     .map((block) => block.text)
     .join("");
+}
+
+/**
+ * 응답의 tool_use 블록 → 중립 `ToolCall[]`. **F1까지 `extractText`가 버리던 것이다.**
+ *
+ * `input`이 이미 파싱된 객체라 여기선 할 일이 없다 — OpenAI 쪽에서 문자열을 파싱하는
+ * 것과 대조된다(비대칭은 각 어댑터가 자기 안에서 흡수한다).
+ */
+export function extractToolCalls(message: Anthropic.Message): ToolCall[] {
+  return message.content
+    .filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use")
+    .map((block) => ({
+      id: block.id,
+      name: block.name,
+      args: (block.input ?? {}) as Record<string, unknown>,
+    }));
+}
+
+/** 중립 툴 선언 → Anthropic `tools`. 이름만 다르고(`parameters` → `input_schema`) 모양은 같다. */
+export function toAnthropicTools(specs: ToolSpec[]): Anthropic.ToolUnion[] {
+  return specs.map((spec) => ({
+    name: spec.name,
+    ...(spec.description === undefined ? {} : { description: spec.description }),
+    input_schema: spec.parameters,
+  }));
 }
 
 /**
@@ -104,6 +169,7 @@ export function anthropicChat(config: AnthropicChatConfig = {}): ChatModel {
   return {
     provider: config.provider ?? "anthropic",
     modelId,
+    supportsTools: true,
 
     async invoke(messages: BaseMessage[], options: ChatOptions = {}): Promise<AIMessage> {
       const converted = toAnthropicMessages(messages);
@@ -122,6 +188,9 @@ export function anthropicChat(config: AnthropicChatConfig = {}): ChatModel {
           max_tokens: options.maxTokens ?? defaultMaxTokens,
           messages: converted.messages,
           ...(system === "" ? {} : { system }),
+          ...(options.tools === undefined || options.tools.length === 0
+            ? {}
+            : { tools: toAnthropicTools(options.tools) }),
         },
         options.signal === undefined ? undefined : { signal: options.signal },
       );
@@ -133,7 +202,8 @@ export function anthropicChat(config: AnthropicChatConfig = {}): ChatModel {
       }
 
       // id를 그대로 실어 보낸다 → addMessages가 같은 id를 교체로 처리한다(V8).
-      return ai(extractText(response), response.id);
+      // 툴 호출이 없으면 `ai`가 키를 안 만들어, 기존 동작과 결과가 **완전히 같다**.
+      return ai(extractText(response), response.id, extractToolCalls(response));
     },
   };
 }

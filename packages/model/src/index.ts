@@ -10,7 +10,13 @@
 // 프로바이더마다 패키지를 깔게 하는 방식과 갈리는 지점이다.
 
 export type { AnthropicChatConfig, CreateMessage } from "./anthropic";
-export { anthropicChat, extractText, toAnthropicMessages } from "./anthropic";
+export {
+  anthropicChat,
+  extractText,
+  extractToolCalls,
+  toAnthropicMessages,
+  toAnthropicTools,
+} from "./anthropic";
 export type { ClaudeCodeConfig, ClaudeCodeResult, RunCli } from "./claudeCode";
 export { buildArgs, claudeCodeChat, parseResult, toPrompt } from "./claudeCode";
 export {
@@ -19,11 +25,17 @@ export {
   MissingApiKeyError,
   MissingProviderConfigError,
   ModelRefusalError,
+  ToolsUnsupportedError,
   UnknownProviderError,
   UnsupportedProviderError,
 } from "./errors";
 export type { CreateCompletion, OpenAICompatibleConfig } from "./openaiCompatible";
-export { openaiCompatible, toOpenAIMessages } from "./openaiCompatible";
+export {
+  openaiCompatible,
+  toOpenAIMessages,
+  toOpenAITools,
+  toolCallsFrom,
+} from "./openaiCompatible";
 export type { ModelConfig, ProviderEntry, ResolvedSpec } from "./registry";
 export { adapterBaseURL, listProviders, model, PROVIDERS, resolveSpec } from "./registry";
-export type { ChatModel, ChatOptions } from "./types";
+export type { ChatModel, ChatOptions, JSONSchemaObject, ToolSpec } from "./types";

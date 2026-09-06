@@ -185,8 +185,27 @@ API 키 하나로 표현되지 않는 자격증명을 다룬다. `ProviderEntry`
 - **깨진 불변식:** "어댑터는 둘뿐"이 이제 틀렸다. 의미를 나눠 고쳤다 — HTTP 프로바이더의 *와이어 포맷*은 여전히 둘, 세 번째는 *트랜스포트*가 다른 하나. `claude-code`는 `env: []`라 "모든 엔트리가 인증 방법을 안다"에도 예외가 생겼다(자격증명이 우리 밖에 있다).
 - **검증:** 56 pass / 3 skip. 순수 함수 3종 + 어댑터 + 그래프 통합 + **실호출**(CLI 없으면 skip). ([노트 15](notes/15-f1_7-claude-code.md))
 
-### F2 · 툴 링 — `@ariadne/tools` (예정)
-F1의 벽을 정면으로 받는다. **core의 메시지 타입 확장**(`content`를 블록 배열로, tool 역할 추가)이 선행되고, 그 위에 툴 정의/실행. ReAct 예제가 문자열 규약 없이 진짜로 돈다.
+### F2 · 툴 링 — 세 커밋
+F1의 벽(`content`가 string이라 툴 호출을 못 담음)을 정면으로 받는다. **모델 링까지 함께 바뀐다** — 어댑터 셋을 전부 손대고 그중 하나는 거부해야 한다(작업량의 절반이 와이어 층이다). 도착점은 **문자열 규약 없이 도는 진짜 ReAct 루프**.
+
+#### F2.1 · 툴 호출 왕복 (core 어휘 + 두 어댑터) — [x] 완료
+- **도는 것:** `bun run --filter '@ariadne/model' example:tools` — 진짜 모델이 `tool_use`를 돌려주고, 예제가 계산해 `tool` 메시지로 되돌려주면 모델이 최종 답을 낸다.
+- **예고를 뒤집었다.** 이 문서는 원래 "`content`를 블록 배열로"라고 적었는데, **안 넓혔다.** `content: string`을 유지하고 `AIMessage.toolCalls?` + `"tool"` 역할을 **곁들임 필드**로 더했다 — LangChain이 실제로 쓰는 방식이고(`messages/ai.py`의 `tool_calls`는 content의 형제 필드다), blast radius가 7파일 → 0이다. 그 결과 **F2도 V8과 같은 성질**이 됐다: 어휘만 넓어지고 `addMessages`도 채널도 엔진도 안 움직인다. 남은 빚은 멀티모달 — 이미지 블록이 부를 때 `content`를 넓힌다.
+- **회귀 0의 조건:** 새 필드는 **비면 키를 아예 안 만든다**(`id`가 쓰던 수법). 기존 테스트 ~7파일이 메시지를 통째로 `toEqual` 비교하므로 빈 배열이라도 실으면 전부 깨진다.
+- **번역 지점이 셋이 됐다.** F1의 둘(역할 이름 · system의 위치)에 **툴 결과의 묶음 단위**가 더해진다 — Anthropic은 한 턴의 결과를 **user 메시지 하나의 블록들**로, OpenAI는 **독립 `role:"tool"` 메시지 낱개**로 받는다. 중립형은 "결과 1개 = 메시지 1개"(`addMessages`가 주소를 붙일 수 있는 단위가 메시지라서)이고, **묶는 건 어댑터가** 한다. 넷째 비대칭은 인자 — 객체 vs **깨질 수 있는 JSON 문자열**(→ `ToolCall.invalidArgs`로 원문 보존, 던지지 않는다).
+- **`claude-code`는 툴을 못 쓴다.** `-p`는 `result` 문자열 하나뿐이고 `--tools`는 내장 툴 목록이라 호출자 정의 툴을 실을 자리가 없다(유일한 경로 `--mcp-config`는 실행이 `ChatModel.invoke` 밖이다 → F3). `ChatModel.supportsTools`로 드러내고 **던진다** — 조용히 무시하면 모델이 산문으로 답해 그래프가 영영 툴 노드로 안 간다.
+- **잡은 조용한 오작동 둘:** 역할이 4개로 늘며 `claudeCode`의 단일 턴 지름길(`role !== "system"`)이 tool 결과를 집고, `openaiCompatible`의 빈 대화 가드가 `[system, tool]`을 통과시켰다. 둘 다 타입 에러가 아니라 논리 구멍이다.
+- **검증:** 207 pass / 3 skip / 0 fail (core 81 · model 88 · **studio 38 무수정**). ([노트 17](notes/17-f2_1-tool-calls.md))
+- **벽 → 다음:** 스키마를 손으로 쓰고(TS 타입과 드리프트), 인자를 그냥 믿고, id를 손으로 맞춘다.
+
+#### F2.2 · `@ariadne/tools` — 정의(zod)와 실행(toolNode) (예정)
+- `defineTool` + `toolNode` — 레지스트리 · `Promise.all` 병렬 · **호출 id당 결과 정확히 하나** · 툴이 `Command`를 돌려주면 상태/제어흐름 갱신.
+- **에러 정책 분기:** 모델이 보낸 인자가 틀리면 에러 메시지로 돌려줘 스스로 고치게 하고, **툴 본문이 던지면 전파**한다.
+- **zod가 모노레포 첫 스키마 라이브러리이자 첫 비-SDK 런타임 의존**이다(core는 여전히 deps 0). `z.toJSONSchema()`는 `$schema`를 뱉고 끄는 옵션이 없어 후처리가 한 줄 필요하다.
+- 의존 간선은 안 는다 — `@ariadne/tools`는 `@ariadne/model`을 **import하지 않고**, 구조적 타이핑으로 `ToolSpec`과 만난다.
+
+#### F2.3 · 스튜디오 — 문자열 규약을 걷어낸다 (예정)
+`react` 예제가 진짜 `toolCalls`/`tool` 메시지로 돌고, Chat에 `tools` 모양이 생긴다. `studio.test.ts`의 가짜 규약 assert를 **의도적으로 대체**하는 첫 사례(회귀 안전망의 첫 예외).
 
 ### F3 · 에이전트 링 — `@ariadne/agent` (예정)
 model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸 보이는 단계 — 새 실행 개념 없이 StateGraph 조립으로 끝나야 한다.

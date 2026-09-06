@@ -8,6 +8,7 @@ import {
   START,
   StateGraph,
   system,
+  tool,
 } from "@ariadne/core";
 import {
   buildArgs,
@@ -18,6 +19,7 @@ import {
   PROVIDERS,
   parseResult,
   type RunCli,
+  ToolsUnsupportedError,
   toPrompt,
 } from "../src/index";
 
@@ -57,6 +59,17 @@ describe("toPrompt — 대화를 한 덩어리로 직렬화", () => {
     const { system: sys, prompt } = toPrompt([system("간결하게"), human("안녕")]);
     expect(sys).toEqual(["간결하게"]);
     expect(prompt).toBe("안녕");
+  });
+
+  test("툴 결과도 라벨을 붙여 편다 (부를 순 없어도 이력은 실어준다)", () => {
+    expect(toPrompt([human("3+4는?"), ai(""), tool("call_1", "7")]).prompt).toBe(
+      "Human: 3+4는?\n\nAssistant: \n\nTool result: 7",
+    );
+  });
+
+  test("**단일 턴 지름길이 tool 결과를 안 집는다** — 역할이 늘며 생겼던 구멍(F2.1 회귀)", () => {
+    // human이 없으므로 지름길을 타면 안 된다. 타면 라벨이 사라져 무슨 값인지 알 수 없다.
+    expect(toPrompt([tool("call_1", "7")]).prompt).toBe("Tool result: 7");
   });
 });
 
@@ -144,6 +157,27 @@ describe("claudeCodeChat", () => {
     await expect(claudeCodeChat({ run: bad.run }).invoke([human("x")])).rejects.toThrow(
       ClaudeCodeError,
     );
+  });
+
+  test("**supportsTools가 false다** — 어댑터 셋 중 유일하게 툴을 못 싣는다", () => {
+    expect(claudeCodeChat({ run: runner(ok("x")).run }).supportsTools).toBe(false);
+  });
+
+  test("**tools를 주면 던진다 — 조용히 무시하지 않는다**", async () => {
+    const { calls, run } = runner(ok("ok"));
+    await expect(
+      claudeCodeChat({ run }).invoke([human("3+4는?")], {
+        tools: [{ name: "add", parameters: { type: "object", properties: {} } }],
+      }),
+    ).rejects.toThrow(ToolsUnsupportedError);
+    // 무시했다면 산문 답변이 돌아와 그래프가 영영 툴 노드로 안 간다.
+    expect(calls).toEqual([]);
+  });
+
+  test("빈 tools 배열은 툴을 안 쓰는 것이므로 통과시킨다", async () => {
+    const { run } = runner(ok("ok"));
+    const result = await claudeCodeChat({ run }).invoke([human("안녕")], { tools: [] });
+    expect(result.content).toBe("ok");
   });
 
   test("그래프에 꽂으면 다른 두 어댑터와 **똑같이** 동작한다", async () => {

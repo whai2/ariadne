@@ -17,8 +17,8 @@
 
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { type AIMessage, ai, type BaseMessage } from "@ariadne/core";
-import { ClaudeCodeError, EmptyConversationError } from "./errors";
+import { type AIMessage, ai, type BaseMessage, isToolMessage } from "@ariadne/core";
+import { ClaudeCodeError, EmptyConversationError, ToolsUnsupportedError } from "./errors";
 import type { ChatModel, ChatOptions } from "./types";
 
 /** `claude -p --output-format json`이 내놓는 result 객체 중 우리가 보는 것만. */
@@ -108,11 +108,16 @@ export function toPrompt(messages: BaseMessage[]): { system: string[]; prompt: s
   for (const msg of messages) {
     if (msg.role === "system") system.push(msg.content);
     else if (msg.role === "ai") turns.push(`Assistant: ${msg.content}`);
+    // 툴 결과도 실어는 준다 — 이미 대화를 텍스트로 펴고 있으니 손실의 성질이 같다.
+    // (툴을 **부르는** 건 못 한다. 그건 아래 invoke가 거부한다.)
+    else if (isToolMessage(msg)) turns.push(`Tool result: ${msg.content}`);
     else turns.push(`Human: ${msg.content}`);
   }
   // 턴이 하나뿐이면 라벨이 잡음이다 — 그냥 그 내용만 보낸다.
-  const only = messages.find((m) => m.role !== "system");
-  const prompt = turns.length === 1 ? (only?.content ?? "") : turns.join("\n\n");
+  // **human만 이 지름길을 탄다**: 역할이 늘면서 `role !== "system"`이 tool 결과를
+  // "유일한 턴"으로 집는 구멍이 생겼다(그러면 라벨이 사라져 무슨 값인지 알 수 없게 된다).
+  const only = messages.find((m) => m.role === "human");
+  const prompt = turns.length === 1 && only !== undefined ? only.content : turns.join("\n\n");
   return { system, prompt };
 }
 
@@ -192,11 +197,21 @@ function spawnCli(executable: string, cwd?: string): RunCli {
 export function claudeCodeChat(config: ClaudeCodeConfig = {}): ChatModel {
   const run = config.run ?? spawnCli(config.executable ?? "claude", config.cwd ?? tmpdir());
 
+  const provider = config.provider ?? "claude-code";
+
   return {
-    provider: config.provider ?? "claude-code",
+    provider,
     modelId: config.model ?? "default",
+    // **와이어에 자리가 없다.** `-p`는 result 문자열 하나를 돌려주고, `--tools`는 내장 툴
+    // 목록이라 호출자가 정의한 툴을 넣을 데가 없다. F1.7이 "어댑터는 둘뿐"을 깼듯,
+    // 여기선 "모든 프로바이더가 툴을 쓸 수 있다"가 깨진다.
+    supportsTools: false,
 
     async invoke(messages: BaseMessage[], options: ChatOptions = {}): Promise<AIMessage> {
+      // 조용히 무시하면 모델이 산문으로 답하고 그래프가 영영 툴 노드로 안 간다.
+      if (options.tools !== undefined && options.tools.length > 0) {
+        throw new ToolsUnsupportedError(provider);
+      }
       const { system: convSystem, prompt } = toPrompt(messages);
       if (prompt === "") throw new EmptyConversationError();
 

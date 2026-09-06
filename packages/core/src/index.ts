@@ -27,8 +27,21 @@ export type {
   RouteTarget,
   StateSchema,
   SystemMessage,
+  ToolCall,
+  ToolMessage,
 } from "./graph";
-export { addMessages, ai, Command, human, messagesSchema, StateGraph, system } from "./graph";
+export {
+  addMessages,
+  ai,
+  Command,
+  human,
+  isAIMessage,
+  isToolMessage,
+  messagesSchema,
+  StateGraph,
+  system,
+  tool,
+} from "./graph";
 export type {
   BoundFn,
   ChannelSnapshot,

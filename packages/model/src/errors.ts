@@ -90,6 +90,27 @@ export class ClaudeCodeError extends Error {
   }
 }
 
+/**
+ * 이 어댑터의 **와이어에 툴 정의를 실을 자리가 없다.** 지금은 `claude-code` 하나다 —
+ * `claude -p`는 `result` 문자열 하나만 돌려주고, `--tools`는 내장 툴 목록이라
+ * 호출자가 정의한 툴을 넣을 수 없다.
+ *
+ * **조용히 무시하지 않는 게 요점이다.** 무시하면 모델이 툴 대신 산문으로 답하고,
+ * 그래프는 영영 툴 노드로 안 간다 — F1.7이 하네스 오염에서 겪은 바로 그 "조용한 오작동"이다.
+ */
+export class ToolsUnsupportedError extends Error {
+  readonly provider: string;
+  constructor(provider: string) {
+    super(
+      `"${provider}"는 호출자가 정의한 툴을 실을 수 없다 — print 모드는 텍스트 한 번 왕복이다. ` +
+        `툴이 필요하면 툴을 실을 수 있는 프로바이더를 쓰거나(anthropic·openai 호환), ` +
+        `MCP 서버로 붙여야 한다(→ F3 에이전트 링).`,
+    );
+    this.name = "ToolsUnsupportedError";
+    this.provider = provider;
+  }
+}
+
 /** API 키를 못 찾았다. **어느 환경변수를 채워야 하는지 이름을 알려준다.** */
 export class MissingApiKeyError extends Error {
   readonly provider: string;

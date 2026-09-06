@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "example": "bun run examples/chat.ts",
+    "example:tools": "bun run examples/tools.ts",
     "sync": "bun run scripts/sync-providers.ts"
   },
   "dependencies": {

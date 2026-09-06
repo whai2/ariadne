@@ -4,18 +4,23 @@ import {
   ai,
   END,
   human,
+  isAIMessage,
   type MessagesState,
   messagesSchema,
   START,
   StateGraph,
   system,
+  type ToolCall,
+  tool,
 } from "@ariadne/core";
 import {
   anthropicChat,
   type CreateMessage,
   EmptyConversationError,
+  extractToolCalls,
   ModelRefusalError,
   toAnthropicMessages,
+  toAnthropicTools,
 } from "../src/index";
 
 /** 가짜 응답 한 개. 실제 SDK 응답 모양을 그대로 흉내낸다. */
@@ -74,6 +79,105 @@ describe("toAnthropicMessages — 순수 변환", () => {
     ]);
     expect(sys).toEqual(["너는 수학 선생님이다", "한국어로만 답해라"]);
     expect(messages).toEqual([{ role: "user", content: "2+2는?" }]);
+  });
+});
+
+describe("toAnthropicMessages — 툴 (F2.1)", () => {
+  const add: ToolCall = { id: "call_1", name: "add", args: { a: 3, b: 4 } };
+  const mul: ToolCall = { id: "call_2", name: "multiply", args: { a: 5, b: 6 } };
+
+  test("**content가 비면 text 블록을 안 만든다** — 빈 text 블록은 400이다", () => {
+    const { messages } = toAnthropicMessages([ai("", "m1", [add])]);
+    expect(messages).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "call_1", name: "add", input: { a: 3, b: 4 } }],
+      },
+    ]);
+  });
+
+  test("텍스트가 같이 있으면 [text, tool_use] 순서로 나간다", () => {
+    const { messages } = toAnthropicMessages([ai("계산할게요", "m1", [add])]);
+    expect(messages[0]?.content).toEqual([
+      { type: "text", text: "계산할게요" },
+      { type: "tool_use", id: "call_1", name: "add", input: { a: 3, b: 4 } },
+    ]);
+  });
+
+  test("**연속한 tool 메시지 셋이 user 메시지 하나로 접힌다** — 두 포맷이 갈리는 지점", () => {
+    const { messages } = toAnthropicMessages([
+      ai("", "m1", [add, mul]),
+      tool("call_1", "7"),
+      tool("call_2", "30"),
+      tool("call_3", "…"),
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "call_1", content: "7" },
+        { type: "tool_result", tool_use_id: "call_2", content: "30" },
+        { type: "tool_result", tool_use_id: "call_3", content: "…" },
+      ],
+    });
+  });
+
+  test("human이 끼면 런이 끊겨 user 메시지가 둘로 갈린다", () => {
+    const { messages } = toAnthropicMessages([
+      tool("call_1", "7"),
+      human("고마워"),
+      tool("call_2", "30"),
+    ]);
+    expect(messages.map((m) => (Array.isArray(m.content) ? "blocks" : m.content))).toEqual([
+      "blocks",
+      "고마워",
+      "blocks",
+    ]);
+  });
+
+  test("system은 대화에서 빠지므로 런을 **안** 끊는다 (있으나 없으나 같아야 한다)", () => {
+    const { messages } = toAnthropicMessages([
+      tool("call_1", "7"),
+      system("한국어로"),
+      tool("call_2", "30"),
+    ]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.content).toHaveLength(2);
+  });
+
+  test("status:'error'는 is_error로 나간다 (Anthropic엔 자리가 있다)", () => {
+    const { messages } = toAnthropicMessages([tool("call_1", "터졌다", "error")]);
+    expect(messages[0]?.content).toEqual([
+      { type: "tool_result", tool_use_id: "call_1", content: "터졌다", is_error: true },
+    ]);
+  });
+
+  test("toAnthropicTools — parameters가 input_schema로 이름만 바뀐다", () => {
+    expect(
+      toAnthropicTools([
+        { name: "add", description: "더한다", parameters: { type: "object", properties: {} } },
+      ]),
+    ).toEqual([
+      { name: "add", description: "더한다", input_schema: { type: "object", properties: {} } },
+    ]);
+  });
+
+  test("extractToolCalls — input이 이미 객체라 파싱이 없다 (OpenAI와 대조)", () => {
+    const calls = extractToolCalls(
+      fakeResponse("", {
+        content: [
+          { type: "text", text: "계산할게요", citations: null },
+          {
+            type: "tool_use",
+            id: "call_1",
+            name: "add",
+            input: { a: 3, b: 4 },
+            caller: { type: "direct" },
+          },
+        ] as Anthropic.ContentBlock[],
+      }),
+    );
+    expect(calls).toEqual([{ id: "call_1", name: "add", args: { a: 3, b: 4 } }]);
   });
 });
 
@@ -148,6 +252,69 @@ describe("anthropicChat.invoke", () => {
     );
     await expect(anthropicChat({ create }).invoke([human("…")])).rejects.toThrow(ModelRefusalError);
   });
+
+  test("supportsTools — 이 와이어는 툴 정의를 실을 수 있다", () => {
+    expect(anthropicChat({ create: recorder().create }).supportsTools).toBe(true);
+  });
+
+  test("options.tools가 body.tools로 그대로 나간다", async () => {
+    const { calls, create } = recorder();
+    await anthropicChat({ create }).invoke([human("3+4는?")], {
+      tools: [
+        {
+          name: "add",
+          description: "두 수를 더한다",
+          parameters: {
+            type: "object",
+            properties: { a: { type: "number" }, b: { type: "number" } },
+            required: ["a", "b"],
+          },
+        },
+      ],
+    });
+    expect(calls[0]?.tools).toEqual([
+      {
+        name: "add",
+        description: "두 수를 더한다",
+        input_schema: {
+          type: "object",
+          properties: { a: { type: "number" }, b: { type: "number" } },
+          required: ["a", "b"],
+        },
+      },
+    ]);
+  });
+
+  test("툴을 안 주면 body에 tools 키가 아예 없다 (기존 호출과 같은 요청)", async () => {
+    const { calls, create } = recorder();
+    await anthropicChat({ create }).invoke([human("안녕")]);
+    expect(calls[0]).not.toHaveProperty("tools");
+  });
+
+  test("**tool_use 블록이 AIMessage에 실린다** — F1까지 extractText가 버리던 것", async () => {
+    const { create } = recorder(
+      fakeResponse("", {
+        id: "msg_t",
+        stop_reason: "tool_use",
+        content: [
+          {
+            type: "tool_use",
+            id: "call_1",
+            name: "add",
+            input: { a: 3, b: 4 },
+            caller: { type: "direct" },
+          },
+        ] as Anthropic.ContentBlock[],
+      }),
+    );
+    const result = await anthropicChat({ create }).invoke([human("3+4는?")]);
+    expect(result).toEqual({
+      role: "ai",
+      content: "",
+      id: "msg_t",
+      toolCalls: [{ id: "call_1", name: "add", args: { a: 3, b: 4 } }],
+    });
+  });
 });
 
 describe("그래프에 꽂기 — 모델 링이 core 위에 얹힌다", () => {
@@ -190,6 +357,66 @@ describe("그래프에 꽂기 — 모델 링이 core 위에 얹힌다", () => {
     expect(calls[1]?.messages).toHaveLength(2); // 이전 AI 응답이 실려 감
     expect(calls[2]?.messages).toHaveLength(2); // id가 같아 addMessages가 교체 → 안 늘어남
     expect(out.turns).toBe(3);
+  });
+
+  test("툴 한 바퀴 — **두 번째 요청에 tool_result가 실려 나간다**", async () => {
+    const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
+    // 1번째 호출은 툴을 부르고, 2번째는 최종 답을 낸다.
+    const create: CreateMessage = async (body) => {
+      calls.push(body);
+      return calls.length === 1
+        ? fakeResponse("", {
+            id: "msg_1",
+            stop_reason: "tool_use",
+            content: [
+              {
+                type: "tool_use",
+                id: "call_1",
+                name: "add",
+                input: { a: 3, b: 4 },
+                caller: { type: "direct" },
+              },
+            ] as Anthropic.ContentBlock[],
+          })
+        : fakeResponse("답: 7", { id: "msg_2" });
+    };
+    const model = anthropicChat({ create });
+
+    const g = new StateGraph<MessagesState>(messagesSchema);
+    g.addNode("model", async (s) => ({ messages: [await model.invoke(s.messages)] }));
+    // 손으로 만든 실행기 — 이 자리가 F2.2의 toolNode가 될 곳이다.
+    g.addNode("tools", (s) => {
+      const wanted = [...s.messages].reverse().find(isAIMessage)?.toolCalls ?? [];
+      return {
+        messages: wanted.map((c) => tool(c.id, String(Number(c.args.a) + Number(c.args.b)))),
+      };
+    });
+    g.addEdge(START, "model");
+    g.addConditionalEdges(
+      "model",
+      (s) => {
+        const last = [...s.messages].reverse().find(isAIMessage);
+        return (last?.toolCalls?.length ?? 0) > 0 ? "tools" : END;
+      },
+      ["tools", END],
+    );
+    g.addEdge("tools", "model");
+
+    const out = await g.compile().invoke({ messages: [human("3+4는?")] });
+
+    expect(out.messages.map((m) => m.role)).toEqual(["human", "ai", "tool", "ai"]);
+    expect(out.messages.at(-1)?.content).toBe("답: 7");
+    // 두 번째 요청의 마지막 메시지가 tool_result를 담은 user 메시지다.
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "call_1", content: "7" }],
+    });
+    // 그리고 그 앞은 tool_use를 담은 assistant 메시지 — 짝이 맞아야 400이 안 난다.
+    expect(calls[1]?.messages.at(-2)).toEqual({
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call_1", name: "add", input: { a: 3, b: 4 } }],
+    });
   });
 });
 
