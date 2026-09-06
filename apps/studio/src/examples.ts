@@ -3,15 +3,16 @@ import {
   type CompiledGraph,
   END,
   human,
+  isToolMessage,
   type MessagesState,
   messagesSchema,
   Send,
   START,
   StateGraph,
   type StateSchema,
-  system,
 } from "@ariadne/core";
 import { model } from "@ariadne/model";
+import { add, multiply, toolNode, toolsCondition } from "@ariadne/tools";
 
 /** 스튜디오가 고를 수 있는 예제 하나. 타입은 지우고(런타임 데모) 이름/설명/샘플입력을 곁들인다. */
 export interface Example {
@@ -263,25 +264,65 @@ export const examples: Example[] = [
   example<MessagesState>(
     {
       id: "react",
-      name: "ReAct 에이전트 루프",
+      name: "ReAct 에이전트 루프 (진짜 툴)",
       description:
-        "model ⇄ tool 반복 후 종료. model이 조건부로 tool을 부르고(V5 루프), tool 결과를 들고 다시 model로. messages가 누적(V8). 실제 LLM/툴은 가짜 — 에이전트의 교과서 골격. (조건/루프 엣지는 그래프 그림엔 안 보이고 Run 스텝으로 관찰)",
-      sampleInput: { messages: [human("2+2 계산해줘")] },
+        "model ⇄ tools 반복 후 종료. **문자열 규약이 아니라 진짜 toolCalls/tool 메시지로 돈다**(F2) — 모델이 한 턴에 add·multiply 둘을 부르고, toolNode(@ariadne/tools)가 zod로 인자를 검증해 **병렬 실행**한 뒤 호출 id마다 결과를 하나씩 낸다. 툴은 진짜로 돌고 모델만 가짜다(결정론적이어야 관찰이 된다). messages 채널 값에서 toolCalls의 id와 tool 메시지의 toolCallId가 짝을 이루는 걸 보라. (조건/루프 엣지는 Run 스텝으로 관찰)",
+      sampleInput: { messages: [human("3+4랑 5×6 계산해줘")] },
     },
     (g) => {
-      // 가짜 모델: 도구결과가 있으면 최종 답, 없으면 도구 호출
+      // 가짜 모델. **상태를 안 들고 messages만 보고 정한다** — 스튜디오는 컴파일된 그래프를
+      // 캐시해 여러 번 돌리므로, 턴 카운터를 클로저에 두면 두 번째 Run이 다르게 굴러버린다.
       g.addNode("model", (s) => {
-        const hasToolResult = s.messages.some((m) => m.content.startsWith("도구결과:"));
-        return hasToolResult ? { messages: [ai("답: 4")] } : { messages: [ai("도구호출: calc")] };
+        const results = s.messages.filter(isToolMessage);
+        if (results.length > 0) {
+          return { messages: [ai(`계산 결과: ${results.map((m) => m.content).join(" · ")}`)] };
+        }
+        return {
+          messages: [
+            ai("", undefined, [
+              { id: "call_1", name: "add", args: { a: 3, b: 4 } },
+              { id: "call_2", name: "multiply", args: { a: 5, b: 6 } },
+            ]),
+          ],
+        };
       });
-      g.addNode("tool", () => ({ messages: [system("도구결과: 4")] })); // 가짜 툴
+      // 노드 이름이 "tools"인 건 toolsCondition이 그 이름을 돌려주기 때문이다(langgraph도 같다).
+      g.addNode("tools", toolNode<MessagesState>([add, multiply]));
       g.addEdge(START, "model");
-      g.addConditionalEdges(
-        "model",
-        (s) => (s.messages.at(-1)?.content.startsWith("도구호출:") ? "tool" : END),
-        ["tool", END], // ← 이걸 적어야 루프가 그림에 나온다(path_map)
-      );
-      g.addEdge("tool", "model"); // 도구 결과 들고 다시 model로 (루프)
+      g.addConditionalEdges("model", toolsCondition, ["tools", END]); // path_map: 루프를 그림에 남긴다
+      g.addEdge("tools", "model"); // 툴 결과를 들고 다시 model로 (루프)
+    },
+    messagesSchema,
+  ),
+
+  example<MessagesState>(
+    {
+      id: "react-repair",
+      name: "툴 인자 검증 실패 → 자가 수정",
+      description:
+        '같은 루프인데 모델이 add(a: "셋")처럼 **스키마를 어긴 인자**를 보낸다. toolNode는 던지지 않고 status:"error" 툴 메시지로 어느 인자가 왜 틀렸는지 돌려주고, 모델은 다음 턴에 스스로 고친다 → 스텝이 5개(model·tools·model·tools·model). 이게 툴 링 에러 정책의 절반이다. 나머지 절반: **툴 본문이 던지면 그대로 전파한다**(모델이 고칠 수 없는 우리 버그라서).',
+      sampleInput: { messages: [human("3+4 계산해줘")] },
+    },
+    (g) => {
+      g.addNode("model", (s) => {
+        // 마지막 툴 결과 하나만 보면 세 상황이 갈린다 — 이것도 상태 없이 돌기 위한 조건이다.
+        const last = s.messages.filter(isToolMessage).at(-1);
+        if (last === undefined) {
+          return {
+            messages: [ai("", undefined, [{ id: "c1", name: "add", args: { a: "셋", b: 4 } }])],
+          };
+        }
+        if (last.status === "error") {
+          return {
+            messages: [ai("", undefined, [{ id: "c2", name: "add", args: { a: 3, b: 4 } }])],
+          };
+        }
+        return { messages: [ai(`답: ${last.content}`)] };
+      });
+      g.addNode("tools", toolNode<MessagesState>([add, multiply]));
+      g.addEdge(START, "model");
+      g.addConditionalEdges("model", toolsCondition, ["tools", END]);
+      g.addEdge("tools", "model");
     },
     messagesSchema,
   ),

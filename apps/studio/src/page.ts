@@ -35,6 +35,9 @@ export const PAGE = `<!doctype html>
   .msg .who { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
   .msg.human .who { color: #06c; }
   .msg.ai .who { color: #0b6; }
+  .msg.tool .who { color: #85f; }
+  .msg.toolerr .who { color: #c00; }
+  .msg .calls { font-family: ui-monospace, monospace; font-size: 12px; color: #85f; margin-top: 3px; }
   .msg .body { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
   .msg.pending .body { color: #999; }
   .composer { display: flex; gap: 8px; margin-top: 10px; }
@@ -49,7 +52,8 @@ export const PAGE = `<!doctype html>
   .ch td { padding: 2px 6px; border-bottom: 1px solid #f3f3f3; }
   .ch .k { font-weight: 600; }
   .ch .t { color: #85f; font-family: ui-monospace, monospace; }
-  .ch .v { font-family: ui-monospace, monospace; color: #333; }
+  /* 툴 예제의 messages 값은 toolCalls까지 실려 길다 — 안 접으면 표가 화면 밖으로 나간다. */
+  .ch .v { font-family: ui-monospace, monospace; color: #333; word-break: break-all; }
   .ok { color: #0b6; }
   .empty { color: #bbb; }
   .err { color: #c00; background: #fff5f5; border: 1px solid #fcc; border-radius: 6px; padding: 10px; font: 12px ui-monospace, monospace; white-space: pre-wrap; }
@@ -85,7 +89,8 @@ export const PAGE = `<!doctype html>
     <div class="need" id="need"></div>
     <div class="lbl">Graph</div>
     <select id="shape" style="margin-bottom:4px"></select>
-    <p id="shapeDesc" class="muted" style="margin:0 0 10px"></p>
+    <p id="shapeDesc" class="muted" style="margin:0 0 4px"></p>
+    <p id="toolwarn" class="need hidden" style="margin:0 0 10px"></p>
     <div class="lbl">System (선택)</div>
     <input id="system" placeholder="예: 간결하게 한국어로 답한다." style="margin-bottom:10px" />
 
@@ -194,6 +199,21 @@ export const PAGE = `<!doctype html>
     var need = document.getElementById("need");
     if (p.ready) { need.className = "need ready"; need.textContent = "✓ 바로 사용 가능"; }
     else { need.className = "need"; need.textContent = "⚠ 필요: " + p.need; }
+    refreshToolWarning();
+  }
+
+  // 툴을 못 싣는 프로바이더(claude-code)로 tools 모양을 고르면 **보내기 전에** 알려준다.
+  // 안 그러면 요청을 보내고 나서야 ToolsUnsupportedError를 본다.
+  function refreshToolWarning() {
+    var p = currentProvider();
+    var box = document.getElementById("toolwarn");
+    if (!box) return;
+    var bad = currentShape() === "tools" && p && !p.tools;
+    box.classList.toggle("hidden", !bad);
+    if (bad) {
+      box.textContent = "⚠ " + p.name + "는 툴을 못 쓴다 — 와이어에 툴 선언을 실을 자리가 없어" +
+        " 이 모양은 던진다. 툴이 되는 프로바이더를 고르라.";
+    }
   }
 
   async function loadProviders() {
@@ -239,6 +259,7 @@ export const PAGE = `<!doctype html>
     var d = document.getElementById("shapeDesc");
     // 모델을 여러 번 부르는 모양은 그만큼 오래 걸린다 — 미리 알려준다.
     d.textContent = sh ? sh.description + " (모델 호출 " + sh.calls + "회)" : "";
+    refreshToolWarning();
     await drawChatGraph();
   }
 
@@ -256,8 +277,17 @@ export const PAGE = `<!doctype html>
   function renderLog(pending) {
     var box = document.getElementById("log");
     var html = convo.map(function (m) {
-      return "<div class='msg " + m.role + "'><div class='who'>" + m.role + "</div>" +
-        "<div class='body'>" + esc(m.content) + "</div></div>";
+      // 툴을 부르는 AI 메시지는 **content가 비어 있다** — toolCalls를 안 그리면
+      // 빈 말풍선만 남아서, 화면상으로는 모델이 아무 말도 안 한 것처럼 보인다.
+      var calls = (m.toolCalls || []).map(function (c) {
+        return "🔧 " + c.name + "(" + JSON.stringify(c.args) + ")  #" + c.id;
+      }).join("\\n");
+      // 툴 결과는 어느 호출의 답인지가 전부다 — id를 라벨에 박아 짝을 눈으로 확인한다.
+      var who = m.role + (m.toolCallId ? " → #" + m.toolCallId : "");
+      return "<div class='msg " + m.role + (m.status === "error" ? " toolerr" : "") + "'>" +
+        "<div class='who'>" + esc(who) + (m.status === "error" ? " ✗" : "") + "</div>" +
+        (m.content ? "<div class='body'>" + esc(m.content) + "</div>" : "") +
+        (calls ? "<div class='calls body'>" + esc(calls) + "</div>" : "") + "</div>";
     }).join("");
     if (pending) {
       html += "<div class='msg ai pending'><div class='who'>ai</div><div class='body'>생각 중…</div></div>";

@@ -99,19 +99,63 @@ describe("Studio fetch 핸들러 (예제 갤러리)", () => {
     expect(steps.at(-1)?.state.n).toBe(3);
   });
 
-  it("react 예제는 model⇄tool 루프 후 종료하며 메시지가 누적된다", async () => {
+  // 아래 두 테스트는 F2.3에서 **의도적으로 대체**됐다. 예전엔 "도구호출: calc" 같은
+  // 문자열 규약을 assert했는데, 그건 툴 호출을 흉내 낸 것이지 툴 호출이 아니었다.
+  // 회귀 안전망을 깨는 게 아니라, 안전망이 지키던 대상 자체가 바뀐 첫 사례다.
+  it("react 예제는 진짜 toolCalls로 돌고 한 턴의 툴 둘이 병렬 실행된다", async () => {
     const { steps } = (await (
-      await run("react", { messages: [{ role: "human", content: "2+2 계산해줘" }] })
+      await run("react", { messages: [{ role: "human", content: "3+4랑 5×6 계산해줘" }] })
     ).json()) as {
-      steps: Array<{ nodes: string[]; state: { messages: Array<{ content: string }> } }>;
+      steps: Array<{
+        nodes: string[];
+        state: {
+          messages: Array<{
+            role: string;
+            content: string;
+            toolCalls?: Array<{ id: string; name: string }>;
+            toolCallId?: string;
+          }>;
+        };
+      }>;
     };
-    expect(steps.map((s) => s.nodes)).toEqual([["model"], ["tool"], ["model"]]);
-    expect(steps.at(-1)?.state.messages.map((m) => m.content)).toEqual([
-      "2+2 계산해줘",
-      "도구호출: calc",
-      "도구결과: 4",
-      "답: 4",
+    expect(steps.map((s) => s.nodes)).toEqual([["model"], ["tools"], ["model"]]);
+
+    const messages = steps.at(-1)?.state.messages ?? [];
+    // 한 턴에 호출 둘 → toolNode가 병렬로 돌려 **호출 id당 결과 하나**를 순서대로 낸다.
+    expect(messages[1]?.toolCalls?.map((c) => c.name)).toEqual(["add", "multiply"]);
+    expect(messages.filter((m) => m.role === "tool").map((m) => [m.toolCallId, m.content])).toEqual(
+      [
+        ["call_1", "7"],
+        ["call_2", "30"],
+      ],
+    );
+    expect(messages.at(-1)?.content).toBe("계산 결과: 7 · 30");
+  });
+
+  it("react-repair 예제는 스키마 위반을 에러 메시지로 돌려주고 모델이 스스로 고친다", async () => {
+    const { steps } = (await (
+      await run("react-repair", { messages: [{ role: "human", content: "3+4 계산해줘" }] })
+    ).json()) as {
+      steps: Array<{
+        nodes: string[];
+        state: { messages: Array<{ role: string; content: string; status?: string }> };
+      }>;
+    };
+    // 틀린 인자 → 에러 → 고친 인자 → 성공 → 최종 답. 루프가 한 번 더 돈다.
+    expect(steps.map((s) => s.nodes)).toEqual([
+      ["model"],
+      ["tools"],
+      ["model"],
+      ["tools"],
+      ["model"],
     ]);
+
+    const tools = (steps.at(-1)?.state.messages ?? []).filter((m) => m.role === "tool");
+    // **던지지 않는다.** 첫 결과는 status:"error"이고 어느 인자가 왜 틀렸는지 담겨 있다.
+    expect(tools[0]?.status).toBe("error");
+    expect(tools[0]?.content).toContain("expected number, received string");
+    expect(tools[1]?.status).toBeUndefined();
+    expect(tools[1]?.content).toBe("7");
   });
 
   it("rag 예제는 retrieve→summarize×N(동적)→generate로 돈다", async () => {
@@ -336,7 +380,7 @@ describe("클라이언트 JS 회귀 가드", () => {
 
 describe("조건부 엣지가 그림에 나온다 (path_map)", () => {
   async function graphOf(id: string) {
-    return (await (await studio.fetch(new Request("http://x/api/graph?id=" + id))).json()) as {
+    return (await (await studio.fetch(new Request(`http://x/api/graph?id=${id}`))).json()) as {
       edges: Array<{ from: string; to: string; kind?: string }>;
     };
   }
@@ -344,9 +388,10 @@ describe("조건부 엣지가 그림에 나온다 (path_map)", () => {
   it("ReAct 루프가 보인다 — 예전엔 그림에서 통째로 사라졌다", async () => {
     const { edges } = await graphOf("react");
     const cond = edges.filter((e) => e.kind === "conditional");
-    expect(cond.map((e) => e.to).sort()).toEqual(["__end__", "tool"]);
+    // 노드 이름이 "tools"인 건 취향이 아니다 — toolsCondition이 그 문자열을 돌려준다.
+    expect(cond.map((e) => e.to).sort()).toEqual(["__end__", "tools"]);
     // 돌아오는 길은 정적이라, 둘이 합쳐져야 순환이 그려진다.
-    expect(edges).toContainEqual({ from: "tool", to: "model", kind: "static" });
+    expect(edges).toContainEqual({ from: "tools", to: "model", kind: "static" });
   });
 
   it("RAG의 Send 팬아웃도 보인다", async () => {
@@ -372,7 +417,14 @@ describe("챗 그래프 모양 선택", () => {
       id: string;
       calls: number;
     }>;
-    expect(list.map((s) => s.id)).toEqual(["single", "chain", "parallel", "loop", "dispatch"]);
+    expect(list.map((s) => s.id)).toEqual([
+      "single",
+      "chain",
+      "parallel",
+      "loop",
+      "dispatch",
+      "tools",
+    ]);
     for (const s of list) expect(s.calls).toBeGreaterThan(0);
   });
 
@@ -487,6 +539,95 @@ describe.skipIf(!hasCli)("분업이 실제로 나뉜다 (구독 자격증명)", 
     expect(res.messages.length).toBe(res.steps[0]?.state.tasks.length ?? 0);
     expect(res.messages[0]?.content).not.toBe(res.messages[1]?.content);
   }, 240_000);
+});
+
+describe("툴 모양 (F2.3 — 챗이 진짜 툴을 쓴다)", () => {
+  it("구조: model ⇄ tools 루프. **자격증명 없이도** 그려진다", async () => {
+    const g = (await (
+      await studio.fetch(new Request("http://x/api/chat/graph?shape=tools"))
+    ).json()) as { nodes: string[]; edges: Array<{ from: string; to: string; kind?: string }> };
+    expect(g.nodes).toEqual(["model", "tools"]);
+    // toolsCondition이 고르는 두 길 — 그림엔 path_map 덕에 점선으로 나온다(S6).
+    expect(
+      g.edges
+        .filter((e) => e.kind === "conditional")
+        .map((e) => e.to)
+        .sort(),
+    ).toEqual(["__end__", "tools"]);
+    expect(g.edges).toContainEqual({ from: "tools", to: "model", kind: "static" });
+  });
+
+  it("프로바이더 목록이 **툴을 쓸 수 있는지**까지 알려준다", async () => {
+    const list = (await (
+      await studio.fetch(new Request("http://x/api/providers"))
+    ).json()) as Array<{
+      id: string;
+      tools: boolean;
+    }>;
+    // claude-code만 못 한다 — `-p`에 툴 선언을 실을 자리가 없다(F2.1).
+    expect(list.find((p) => p.id === "claude-code")?.tools).toBe(false);
+    expect(list.find((p) => p.id === "anthropic")?.tools).toBe(true);
+    expect(list.find((p) => p.id === "groq")?.tools).toBe(true);
+  });
+
+  it("UI가 보내기 **전에** 경고한다 — 안 그러면 예외를 보고서야 안다", async () => {
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    expect(html).toContain('currentShape() === "tools" && p && !p.tools');
+  });
+
+  it("툴 호출은 content가 비어 있어서, 안 그리면 빈 말풍선만 남는다", async () => {
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    // 로그가 toolCalls와 toolCallId를 실제로 렌더한다.
+    expect(html).toContain("m.toolCalls || []");
+    expect(html).toContain('m.toolCallId ? " → #" + m.toolCallId : ""');
+  });
+
+  it("claude-code로 툴 모양을 고르면 조용히 무시하지 않고 던진다", async () => {
+    // 자격증명도 CLI도 필요 없다 — 어댑터가 와이어를 타기 **전에** 거부하기 때문이다.
+    // 조용히 무시했다면 모델이 산문으로 답하고 그래프가 영영 tools 노드로 안 간다.
+    const res = await studio.fetch(
+      new Request("http://x/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          spec: "claude-code/sonnet",
+          shape: "tools",
+          messages: [{ role: "human", content: "3+4는?" }],
+        }),
+      }),
+    );
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toContain("ToolsUnsupportedError");
+  });
+});
+
+describe.skipIf(!process.env.ANTHROPIC_API_KEY)("툴 모양 실제 실행 (API 키)", () => {
+  it("**진짜 모델이 툴 링을 통해 툴을 부른다** — F2가 도착한 지점", async () => {
+    const res = (await (
+      await studio.fetch(
+        new Request("http://x/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            spec: "anthropic/claude-sonnet-4-5",
+            shape: "tools",
+            messages: [{ role: "human", content: "3+4랑 5×6을 계산해줘." }],
+          }),
+        }),
+      )
+    ).json()) as {
+      messages: Array<{ role: string; content: string; toolCalls?: Array<{ name: string }> }>;
+      steps: Array<{ nodes: string[] }>;
+    };
+
+    expect(res.steps.map((s) => s.nodes)).toContainEqual(["tools"]);
+    const called = res.messages.flatMap((m) => m.toolCalls ?? []).map((c) => c.name);
+    expect(called).toContain("add");
+    expect(called).toContain("multiply");
+    // 마지막은 산문이어야 한다 — 답 없는 tool_use로 끝나면 다음 턴이 400이다.
+    expect(res.messages.at(-1)?.toolCalls).toBeUndefined();
+    expect(res.messages.at(-1)?.content).not.toBe("");
+  }, 180_000);
 });
 
 describe("한글 입력 (IME) 회귀 가드", () => {
