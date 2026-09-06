@@ -198,11 +198,17 @@ F1의 벽(`content`가 string이라 툴 호출을 못 담음)을 정면으로 �
 - **검증:** 207 pass / 3 skip / 0 fail (core 81 · model 88 · **studio 38 무수정**). ([노트 17](notes/17-f2_1-tool-calls.md))
 - **벽 → 다음:** 스키마를 손으로 쓰고(TS 타입과 드리프트), 인자를 그냥 믿고, id를 손으로 맞춘다.
 
-#### F2.2 · `@ariadne/tools` — 정의(zod)와 실행(toolNode) (예정)
-- `defineTool` + `toolNode` — 레지스트리 · `Promise.all` 병렬 · **호출 id당 결과 정확히 하나** · 툴이 `Command`를 돌려주면 상태/제어흐름 갱신.
-- **에러 정책 분기:** 모델이 보낸 인자가 틀리면 에러 메시지로 돌려줘 스스로 고치게 하고, **툴 본문이 던지면 전파**한다.
-- **zod가 모노레포 첫 스키마 라이브러리이자 첫 비-SDK 런타임 의존**이다(core는 여전히 deps 0). `z.toJSONSchema()`는 `$schema`를 뱉고 끄는 옵션이 없어 후처리가 한 줄 필요하다.
-- 의존 간선은 안 는다 — `@ariadne/tools`는 `@ariadne/model`을 **import하지 않고**, 구조적 타이핑으로 `ToolSpec`과 만난다.
+#### F2.2 · `@ariadne/tools` — 정의(zod)와 실행(toolNode) — [x] 완료
+- **도는 것:** `bun run --filter '@ariadne/tools' example` — 가짜 모델이 한 턴에 툴 둘을 부르고, `toolNode`가 병렬로 돌려 결과 둘을 id 순서대로 낸다. **자격증명 0 · 네트워크 0.** 가짜 모델인 게 요점이다 — 검증 대상이 툴 프로토콜이라 결정론적이어야 관찰이 된다.
+- **새 엔진 기능이 없다.** `toolNode(TOOLS)`는 그냥 `NodeFn`이라 `addNode`에 꽂히고, 병렬은 `Promise.all`이, 상태·제어흐름 갱신은 **V7의 `Command`**가 맡는다. **core는 한 글자도 안 바뀌었다.**
+- **의존 간선이 안 늘었다.** `@ariadne/tools`는 `@ariadne/model`을 **import하지 않는다** — `toolSpecs()`의 결과가 `ToolSpec`과 **구조적으로 같을 뿐**이고, 호환을 기계적으로 검사하는 자리는 둘 다 의존하는 `apps/studio`의 `tsc`다. 그 대가로 이 링은 **SDK도 모델 링도 모르는 순수 링**으로 남는다.
+- **zod의 경계는 한 문장이다: "채널에 사는 것만 core에 둔다."** `ToolCall`은 messages에 실려 다니니 core, 툴 선언(JSON Schema)은 프로바이더용 산출물이라 링. core는 여전히 deps 0.
+- **`io: "input"`이 맞다(계획을 실측으로 뒤집음).** 기본값 `"output"`으로 뽑으면 `.default()`가 붙은 필드가 `required`에 들어가 **기본값이 있는데도 모델에게 반드시 보내라고 말한다.** 대가로 `additionalProperties: false`가 빠지지만 zod로 다시 검증하므로 손해가 없다(OpenAI `strict`도 안 켠다 — `.optional()`과 바로 충돌한다). `$schema`는 항상 붙고 끄는 옵션이 없어 한 줄로 뗀다.
+- **에러 정책이 핵심 판단.** 모델이 잘못 준 인자는 **에러 메시지로 돌려줘 스스로 고치게** 하고(없는 툴 이름 → 쓸 수 있는 목록 · 깨진 JSON → 원문 · 스키마 위반 → 어느 인자가 왜), **툴 본문이 던지면 전파**한다. 노브(`handle_tool_errors`)는 두 번째 소비자가 생길 때.
+- **못박은 성질 둘:** ① **`Command.goto`는 더하기다** — `END`는 아무 채널에도 안 쓰고 정적 엣지는 무조건 쓰는 writer라, `goto: END`로는 정적 엣지를 취소하지 못한다(V7에서 구조적으로 나온다). ② **툴 둘이 messages 밖 같은 키를 쓰면 나중 것이 이긴다** — `NodeReturn`이 단일 값이라 채널 리듀서에 닿기 전에 충돌한다(langgraph는 Command 리스트로 피한다).
+- **안 옮긴 것(명시):** 주입 상태·스토어 — 그리고 거기 딸린 **인자 강제 제거**(안 하면 프롬프트 인젝션 구멍이라, 나중에 넣을 때 **옵션이 아니라 필수**다). 그 외 스트리밍 · `return_direct` · `remaining_steps` · 훅 · `ValidationNode` · 예외 타입 추론 · sync/async 이중화.
+- **검증:** 28 pass. 전체 235 pass / 3 skip / 0 fail (core 81 · **tools 28** · model 88 · studio 38 — 앞의 셋 무수정). ([노트 18](notes/18-f2_2-tools-ring.md))
+- **벽 → 다음:** 스튜디오의 `react`가 여전히 문자열 규약으로 거짓말을 하고, 진짜 모델은 이 링을 통해 아직 툴을 안 불렀다.
 
 #### F2.3 · 스튜디오 — 문자열 규약을 걷어낸다 (예정)
 `react` 예제가 진짜 `toolCalls`/`tool` 메시지로 돌고, Chat에 `tools` 모양이 생긴다. `studio.test.ts`의 가짜 규약 assert를 **의도적으로 대체**하는 첫 사례(회귀 안전망의 첫 예외).
@@ -217,6 +223,9 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 - **V0 → V1 → …** 순서로 한 단계씩. 각 단계에서 구현 + `bun:test` + `docs/notes/NN-*.md` 분석 노트까지 완주하고 커밋 후 멈춘다.
 - 커밋 전 `bun run verify`(typecheck + biome + test) 그린.
 - 커밋 메시지: conventional, 본문에 참조한 Python 원본 파일 명시, co-author 트레일러.
+
+## 링의 의존 규칙 (F2.2에서 확정)
+`@ariadne/core`는 **런타임 deps 0**을 유지한다. 링에 무엇을 두고 무엇을 core에 둘지는 한 문장으로 정한다 — **"채널에 사는 것만 core에 둔다."** `ToolCall`은 messages 채널에 실려 다니므로 core, 툴 선언(JSON Schema)·zod는 프로바이더용 산출물이라 링이다. 링끼리도 **서로를 모르는 쪽을 고른다**: `@ariadne/tools`는 `@ariadne/model`을 import하지 않고 구조적 타이핑으로 만나며, 호환 검사는 둘 다 의존하는 `apps/studio`의 `tsc`가 맡는다.
 
 ## 파일 구조 (자연히 수렴)
 Core 엔진 코드는 **`packages/core/`** 아래에 산다 (`src/`, `test/`). 파일은 필요한 곳에 생기고, 여러 곳에서 쓰이면 추출한다. Core 내부 최종 지향점: `packages/core/src/{constants,errors,types,channels,pregel,graph}/`. 예제/데모는 `examples/`, 분석 노트는 `docs/notes/`. 나머지 링·Studio는 각자 `packages/*`, `apps/*` (→ [VISION.md](VISION.md)).
