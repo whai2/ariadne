@@ -18,7 +18,14 @@ export {
   toAnthropicTools,
 } from "./anthropic";
 export type { ClaudeCodeConfig, ClaudeCodeResult, RunCli } from "./claudeCode";
-export { buildArgs, claudeCodeChat, parseResult, toPrompt } from "./claudeCode";
+export {
+  buildArgs,
+  claudeCodeChat,
+  parsePromptedToolCalls,
+  parseResult,
+  renderToolProtocol,
+  toPrompt,
+} from "./claudeCode";
 export {
   ClaudeCodeError,
   EmptyConversationError,

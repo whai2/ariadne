@@ -222,8 +222,19 @@ F1의 벽(`content`가 string이라 툴 호출을 못 담음)을 정면으로 �
 - **검증:** 241 pass / 4 skip / 0 fail (core 81 · tools 28 · model 88 — 앞의 셋 무수정 · **studio 44**). ([노트 19](notes/19-f2_3-studio-tools.md))
 - **벽 → 다음:** `model ⇄ tools` 조립 네 줄이 세 곳에서 똑같이 반복된다. **그게 F3의 동기**이고, 반복이 정확히 네 줄이라는 사실이 "에이전트 = core 위의 특수한 그래프"라는 F3의 제약을 이미 증명한다.
 
+#### F2.4 · claude-code 프롬프트 툴 심 — 우리 링이 실행하는 텍스트 기반 툴 호출 — [x] 완료
+- **도는 것:** `bun run studio` → Chat에서 **claude-code/sonnet + tools 모양**. **API 키 0**으로 진짜 툴 루프가 돈다(라이브 확인: 한 턴 툴 호출 · 두 툴 병렬 호출 모두 왕복 성공).
+- **핵심을 잣대로 길을 갈랐다.** "각 스텝 가시화 + 워크플로우 제어"가 유지되려면 **툴 루프가 우리 그래프 안**에 있어야 한다. MCP는 네이티브지만 루프를 claude 프로세스 안으로 넘겨 이 핵심을 깬다(스텝 안 보임·제어 놓침 → 그건 F3의 SDK 위임 방향). claude-code를 모델로 유지하며 핵심을 지키는 유일한 길이 **길 B — 프롬프트 심**이다.
+- **어댑터 층에서 편다·되살린다.** `renderToolProtocol(specs)`가 툴을 시스템 프롬프트에 텍스트로 풀고, `parsePromptedToolCalls(text)`가 모델의 텍스트를 `ToolCall[]`로 되살린다. 그 뒤 `toolsCondition`/`toolNode`는 **한 글자도 안 바뀐 채** 돈다 — 실행도 라우팅도 우리 링·엔진.
+- **opt-in이라 회귀 0.** `promptedTools`는 `ClaudeCodeConfig` 옵션이고 **기본 꺼짐** → tools를 주면 던지던 F2.1 동작·`supportsTools===false` 테스트가 그대로 그린. 켰을 때만 `supportsTools`가 true가 되고 심이 돈다. `supportsTools`의 뜻("와이어가 툴 정의를 실을 수 있나")도 지킴 — 프롬프트가 와이어면 실을 수 있으니 true가 맞다.
+- **잡은 구멍:** 툴을 부르는 ai 메시지는 `content`가 비어(호출은 toolCalls에 있음) `toPrompt`가 2턴째에 "Assistant: "(빈 줄)만 남겨 **모델이 자기 이전 행동을 못 봤다** → toolCalls를 규약과 같은 JSON으로 되살려 편다(네이티브 모드엔 안 타므로 기존 테스트 무변).
+- **정직(대가 셋):** ① **id를 우리가 만든다**(프로바이더가 안 주므로 `call_1`… — 텍스트 이력이라 턴 간 재사용 무해). ② **와이어 스키마 강제 없음** → zod가 toolNode에서 사후 검증, 깨진 인자는 `invalidArgs`로 보존, `stripFence`로 ```json``` 흡수. ③ **파싱은 최선 노력**(통째 → 바깥 `{…}` 재시도). 네이티브보다 덜 튼튼하고, UI가 "흉내 모드"임을 알린다(막지는 않음).
+- **스튜디오:** `buildChatGraph`가 tools 모양에서 **모든** 프로바이더에 `promptedTools`를 켠다(네이티브는 무시, claude-code만 흉내 → 분기 불필요). F2.3의 "못 쓴다/던진다" 경고를 "프롬프트로 흉내 낸다/덜 안정적" 안내로 바꿨고, 이 세션 F2.3에서 추가했던 "claude-code+tools → 500" 테스트를 **대체**했다(회귀가 아니라 전제가 바뀜).
+- **검증:** 250 pass / 4 skip / 0 fail (core 81 · tools 28 무수정 · **model 97** · **studio 44**). ([노트 20](notes/20-f2_4-claude-code-prompted-tools.md))
+- **벽 → 다음:** 네 어댑터 전부가 툴 루프에 참여한다(셋 네이티브 + 하나 심). 조립 네 줄이 여전히 세 곳에서 반복 → **F3의 동기**. 그때도 루프는 우리 엔진 안(이 커밋이 지킨 핵심).
+
 ### F3 · 에이전트 링 — `@ariadne/agent` (예정)
-model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸 보이는 단계 — 새 실행 개념 없이 StateGraph 조립으로 끝나야 한다.
+model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸 보이는 단계 — 새 실행 개념 없이 StateGraph 조립으로 끝나야 한다. **루프는 우리 엔진 안에 남는다**(F2.4가 MCP 위임과 갈라 지킨 핵심). MCP/세션/승인 게이트로 claude-code를 확장하는 SDK 경로는 여기서 다룬다.
 
 ### F4 · 메모리 링 — `@ariadne/memory` (예정)
 대화 히스토리 + RAG. 영속성(checkpointer)은 core의 범위 밖이었으므로 여기서 처음 부딪힌다.

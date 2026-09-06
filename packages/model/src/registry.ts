@@ -139,6 +139,11 @@ export interface ModelConfig {
   baseURL?: string;
   maxTokens?: number;
   system?: string;
+  /**
+   * claude-code에서 툴을 **프롬프트로 흉내** 낼지(길 B). 다른 어댑터는 무시한다 —
+   * 걔들은 와이어에 네이티브로 싣는다. claude-code에서만 의미가 있다.
+   */
+  promptedTools?: boolean;
   /** 환경변수 출처. 기본은 `process.env` — 테스트가 여기를 갈아끼운다. */
   env?: Record<string, string | undefined>;
 }
@@ -165,6 +170,7 @@ export function model(spec: string, config: ModelConfig = {}): ChatModel {
       provider,
       ...(modelId === "default" ? {} : { model: modelId }),
       ...(config.system === undefined ? {} : { system: config.system }),
+      ...(config.promptedTools === undefined ? {} : { promptedTools: config.promptedTools }),
     });
   }
 

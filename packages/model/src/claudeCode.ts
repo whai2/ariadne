@@ -17,9 +17,16 @@
 
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { type AIMessage, ai, type BaseMessage, isToolMessage } from "@ariadne/core";
+import {
+  type AIMessage,
+  ai,
+  type BaseMessage,
+  isAIMessage,
+  isToolMessage,
+  type ToolCall,
+} from "@ariadne/core";
 import { ClaudeCodeError, EmptyConversationError, ToolsUnsupportedError } from "./errors";
-import type { ChatModel, ChatOptions } from "./types";
+import type { ChatModel, ChatOptions, ToolSpec } from "./types";
 
 /** `claude -p --output-format json`이 내놓는 result 객체 중 우리가 보는 것만. */
 export interface ClaudeCodeResult {
@@ -88,6 +95,16 @@ export interface ClaudeCodeConfig {
   cwd?: string;
   /** 관찰용 라벨. */
   provider?: string;
+  /**
+   * 툴을 **프롬프트로 흉내** 낸다 (길 B). **기본은 꺼짐** → tools를 주면 던지던 동작 그대로.
+   *
+   * 켜면 `options.tools`를 시스템 프롬프트에 텍스트로 풀어 넣고(→ `renderToolProtocol`),
+   * 모델이 뱉은 텍스트를 파싱해 `toolCalls`로 되살린다(→ `parsePromptedToolCalls`).
+   * 와이어는 여전히 텍스트 한 왕복이지만 **툴 루프는 우리 그래프 안에 남는다** — 그게
+   * MCP(=claude-code가 자기 루프에서 실행)와 갈리는 지점이고, "스텝 가시화 + 워크플로우
+   * 제어"를 지키는 유일한 길이다.
+   */
+  promptedTools?: boolean;
   /** 실행 함수 주입점(테스트용). */
   run?: RunCli;
 }
@@ -107,9 +124,19 @@ export function toPrompt(messages: BaseMessage[]): { system: string[]; prompt: s
   const turns: string[] = [];
   for (const msg of messages) {
     if (msg.role === "system") system.push(msg.content);
-    else if (msg.role === "ai") turns.push(`Assistant: ${msg.content}`);
-    // 툴 결과도 실어는 준다 — 이미 대화를 텍스트로 펴고 있으니 손실의 성질이 같다.
-    // (툴을 **부르는** 건 못 한다. 그건 아래 invoke가 거부한다.)
+    else if (isAIMessage(msg)) {
+      // 프롬프트 툴 모드(길 B)에선 어시스턴트 메시지가 content 대신 toolCalls를 들 수 있다.
+      // 그걸 규약과 **같은 JSON**으로 되살려 이력에 넣는다 — 안 그러면 다음 턴에 모델이
+      // 자기가 방금 무슨 툴을 불렀는지 못 봐서 되풀이하거나 헤맨다. (네이티브 모드엔
+      // claude-code가 toolCalls를 만들 일이 없으니 이 가지는 프롬프트 모드에서만 탄다.)
+      const calls = msg.toolCalls;
+      turns.push(
+        calls !== undefined && calls.length > 0
+          ? `Assistant: ${renderAssistantCalls(calls)}`
+          : `Assistant: ${msg.content}`,
+      );
+    }
+    // 툴 결과도 실어준다 — 이미 대화를 텍스트로 펴고 있으니 손실의 성질이 같다.
     else if (isToolMessage(msg)) turns.push(`Tool result: ${msg.content}`);
     else turns.push(`Human: ${msg.content}`);
   }
@@ -119,6 +146,105 @@ export function toPrompt(messages: BaseMessage[]): { system: string[]; prompt: s
   const only = messages.find((m) => m.role === "human");
   const prompt = turns.length === 1 && only !== undefined ? only.content : turns.join("\n\n");
   return { system, prompt };
+}
+
+// ─── 길 B · 프롬프트 기반 툴 호출 심 ─────────────────────────────────────────────
+//
+// claude-code의 와이어엔 툴을 실을 자리가 없다(그래서 기본은 던진다). 하지만 우리
+// 아키텍처의 핵심이 "각 스텝 가시화 + 워크플로우 제어"라면, 툴 루프는 **우리 그래프
+// 안에** 있어야 한다 — MCP처럼 claude-code 내부 루프로 넘기면 스텝이 안 보이고 제어도
+// 놓친다. 그래서 네이티브 tool_use API가 없던 시절의 방식을 쓴다: 툴을 **말로 설명**하고,
+// 모델이 뱉은 **텍스트를 파싱**해 우리 어휘(toolCalls)로 되살린다. 그러면 toolsCondition·
+// toolNode·엔진이 그대로 돈다 — 실행도 라우팅도 우리가 한다.
+//
+// 대가(정직): id를 우리가 만들고(프로바이더가 안 주므로), 와이어 스키마 강제가 없다
+// (zod가 toolNode에서 사후 검증한다). 네이티브보다 덜 튼튼하다.
+
+/**
+ * 툴 선언을 **시스템 프롬프트 텍스트**로 편다 (심의 입력 절반). **순수 함수.**
+ *
+ * `options.tools`(모델 링의 `ToolSpec`)를 그대로 받는다 — 툴 링을 import하지 않는다.
+ */
+export function renderToolProtocol(tools: ToolSpec[]): string {
+  const list = tools
+    .map(
+      (t) =>
+        `- ${t.name}: ${t.description ?? ""}\n  parameters(JSON Schema): ${JSON.stringify(t.parameters)}`,
+    )
+    .join("\n");
+  return [
+    "# 사용할 수 있는 툴",
+    list,
+    "",
+    "# 툴 호출 규약",
+    "툴이 필요하면 **오직 아래 JSON 하나만** 출력하고 다른 말·마크다운은 붙이지 마라:",
+    '{"tool_calls":[{"name":"<툴 이름>","arguments":{ ... }}]}',
+    "- 여러 툴을 한 번에 부르려면 배열에 항목을 더 넣어라.",
+    "- 툴이 더 필요 없고 최종 답을 낼 때는 평범한 텍스트로 답하라.",
+  ].join("\n");
+}
+
+/** ```json …``` / ```…``` 코드펜스를 벗긴다 — 모델이 규약을 어기고 습관적으로 감싼다. */
+function stripFence(text: string): string {
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  return fence?.[1] ?? text;
+}
+
+/**
+ * 텍스트에서 `tool_calls` 배열을 꺼낸다. 없으면 빈 배열.
+ * 통째 파싱을 먼저 하고, 실패하면 가장 바깥 `{…}`만 긁어 재시도한다(앞뒤에 잡담이 붙은 경우).
+ */
+function extractToolCallEntries(text: string): unknown[] {
+  for (const candidate of [text, text.match(/\{[\s\S]*\}/)?.[0]]) {
+    if (candidate === undefined) continue;
+    try {
+      const obj = JSON.parse(candidate) as { tool_calls?: unknown };
+      if (Array.isArray(obj.tool_calls)) return obj.tool_calls;
+    } catch {
+      // 다음 후보로
+    }
+  }
+  return [];
+}
+
+/**
+ * 모델이 뱉은 텍스트 → `{ content, toolCalls }` (심의 출력 절반). **순수 함수.**
+ *
+ * `{"tool_calls":[…]}`를 찾으면 되살리고(content는 비운다 — 네이티브 툴 호출 메시지와 같게),
+ * 못 찾으면 텍스트 전체가 최종 답이다. id는 프로바이더가 안 주므로 우리가 붙인다(`call_1`…).
+ * 인자가 깨진 JSON 문자열이면 `invalidArgs`로 원문을 보존한다(OpenAI 비대칭과 같은 처리 —
+ * toolNode가 "필수 인자 누락"으로 오진하지 않게).
+ */
+export function parsePromptedToolCalls(text: string): { content: string; toolCalls: ToolCall[] } {
+  const stripped = stripFence(text).trim();
+  const toolCalls: ToolCall[] = [];
+  extractToolCallEntries(stripped).forEach((entry, i) => {
+    if (typeof entry !== "object" || entry === null) return;
+    const name = (entry as Record<string, unknown>).name;
+    if (typeof name !== "string") return;
+    const id = `call_${i + 1}`;
+    const raw = (entry as Record<string, unknown>).arguments;
+    if (raw === undefined || raw === null) {
+      toolCalls.push({ id, name, args: {} });
+    } else if (typeof raw === "string") {
+      // 모델이 arguments를 문자열로 싼 경우 — 파싱해보고, 깨졌으면 원문 보존.
+      try {
+        toolCalls.push({ id, name, args: JSON.parse(raw) as Record<string, unknown> });
+      } catch {
+        toolCalls.push({ id, name, args: {}, invalidArgs: raw });
+      }
+    } else if (typeof raw === "object") {
+      toolCalls.push({ id, name, args: raw as Record<string, unknown> });
+    } else {
+      toolCalls.push({ id, name, args: {}, invalidArgs: String(raw) });
+    }
+  });
+  return toolCalls.length > 0 ? { content: "", toolCalls } : { content: stripped, toolCalls: [] };
+}
+
+/** 이력용: 어시스턴트의 이전 툴 호출을 규약과 같은 JSON으로 되살린다(toPrompt에서 쓴다). */
+function renderAssistantCalls(calls: ToolCall[]): string {
+  return JSON.stringify({ tool_calls: calls.map((c) => ({ name: c.name, arguments: c.args })) });
 }
 
 /** CLI 인자를 만든다. **순수 함수** — 무엇을 보내는지 테스트로 관찰한다. */
@@ -199,23 +325,31 @@ export function claudeCodeChat(config: ClaudeCodeConfig = {}): ChatModel {
 
   const provider = config.provider ?? "claude-code";
 
+  const promptedTools = config.promptedTools === true;
+
   return {
     provider,
     modelId: config.model ?? "default",
-    // **와이어에 자리가 없다.** `-p`는 result 문자열 하나를 돌려주고, `--tools`는 내장 툴
-    // 목록이라 호출자가 정의한 툴을 넣을 데가 없다. F1.7이 "어댑터는 둘뿐"을 깼듯,
-    // 여기선 "모든 프로바이더가 툴을 쓸 수 있다"가 깨진다.
-    supportsTools: false,
+    // **와이어엔 자리가 없다** — `-p`는 result 문자열 하나뿐. 그래서 기본은 못 싣는다.
+    // 단 `promptedTools`를 켜면 프롬프트로 흉내 낼 수 있다(길 B) → 그땐 실을 자리가 생긴 셈.
+    supportsTools: promptedTools,
 
     async invoke(messages: BaseMessage[], options: ChatOptions = {}): Promise<AIMessage> {
-      // 조용히 무시하면 모델이 산문으로 답하고 그래프가 영영 툴 노드로 안 간다.
-      if (options.tools !== undefined && options.tools.length > 0) {
-        throw new ToolsUnsupportedError(provider);
-      }
+      const wantsTools = options.tools !== undefined && options.tools.length > 0;
+      // 프롬프트 심이 꺼져 있으면 조용히 무시하지 않고 던진다 — 무시하면 모델이 산문으로
+      // 답하고 그래프가 영영 툴 노드로 안 간다.
+      if (wantsTools && !promptedTools) throw new ToolsUnsupportedError(provider);
+
       const { system: convSystem, prompt } = toPrompt(messages);
       if (prompt === "") throw new EmptyConversationError();
 
-      const system = [config.system, options.system, ...convSystem]
+      const system = [
+        config.system,
+        options.system,
+        ...convSystem,
+        // 툴 규약은 **마지막에** 붙인다 — 사용자 지시 뒤에 와야 규약이 덜 묻힌다.
+        ...(wantsTools ? [renderToolProtocol(options.tools ?? [])] : []),
+      ]
         .filter((s): s is string => s !== undefined && s !== "")
         .join("\n\n");
 
@@ -224,9 +358,14 @@ export function claudeCodeChat(config: ClaudeCodeConfig = {}): ChatModel {
         ...(system === "" ? {} : { system }),
       });
 
+      const out = parseResult(await run(args, prompt, options.signal));
+
       // 세션 id를 메시지 id로 쓰지 않는다 — 여러 턴이 같은 세션이면 addMessages가
       // 서로를 덮어쓴다(V8의 "같은 id면 교체"). id 없이 두면 항상 append다.
-      return ai(parseResult(await run(args, prompt, options.signal)));
+      if (!wantsTools) return ai(out);
+      // 툴을 실었으면 텍스트를 toolCalls로 되살린다 — 없으면 그냥 최종 답(prose)이다.
+      const { content, toolCalls } = parsePromptedToolCalls(out);
+      return ai(content, undefined, toolCalls);
     },
   };
 }

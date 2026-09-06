@@ -557,22 +557,23 @@ describe("툴 모양 (F2.3 — 챗이 진짜 툴을 쓴다)", () => {
     expect(g.edges).toContainEqual({ from: "tools", to: "model", kind: "static" });
   });
 
-  it("프로바이더 목록이 **툴을 쓸 수 있는지**까지 알려준다", async () => {
+  it("프로바이더 목록이 **네이티브 툴 여부**를 알려준다(쓸 수 있나가 아니라)", async () => {
     const list = (await (
       await studio.fetch(new Request("http://x/api/providers"))
     ).json()) as Array<{
       id: string;
       tools: boolean;
     }>;
-    // claude-code만 못 한다 — `-p`에 툴 선언을 실을 자리가 없다(F2.1).
+    // claude-code만 네이티브가 아니다 — 프롬프트 심으로 흉내 낸다(F2.4). false지만 못 쓴단 뜻이 아니다.
     expect(list.find((p) => p.id === "claude-code")?.tools).toBe(false);
     expect(list.find((p) => p.id === "anthropic")?.tools).toBe(true);
     expect(list.find((p) => p.id === "groq")?.tools).toBe(true);
   });
 
-  it("UI가 보내기 **전에** 경고한다 — 안 그러면 예외를 보고서야 안다", async () => {
+  it("UI가 보내기 **전에** 흉내 모드임을 안내한다(막는 게 아니라)", async () => {
     const html = await (await studio.fetch(new Request("http://x/"))).text();
     expect(html).toContain('currentShape() === "tools" && p && !p.tools');
+    expect(html).toContain("프롬프트로 흉내 낸다"); // 예전엔 "못 쓴다/던진다"였다(F2.4 대체)
   });
 
   it("툴 호출은 content가 비어 있어서, 안 그리면 빈 말풍선만 남는다", async () => {
@@ -582,22 +583,13 @@ describe("툴 모양 (F2.3 — 챗이 진짜 툴을 쓴다)", () => {
     expect(html).toContain('m.toolCallId ? " → #" + m.toolCallId : ""');
   });
 
-  it("claude-code로 툴 모양을 고르면 조용히 무시하지 않고 던진다", async () => {
-    // 자격증명도 CLI도 필요 없다 — 어댑터가 와이어를 타기 **전에** 거부하기 때문이다.
-    // 조용히 무시했다면 모델이 산문으로 답하고 그래프가 영영 tools 노드로 안 간다.
-    const res = await studio.fetch(
-      new Request("http://x/api/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          spec: "claude-code/sonnet",
-          shape: "tools",
-          messages: [{ role: "human", content: "3+4는?" }],
-        }),
-      }),
-    );
-    expect(res.status).toBe(500);
-    expect(((await res.json()) as { error: string }).error).toContain("ToolsUnsupportedError");
+  it("**claude-code도 툴 모양에서 빌드된다** — 더는 안 막힌다(F2.4, promptedTools)", async () => {
+    // F2.3에선 여기서 ToolsUnsupportedError로 500이었다. 이제 buildChatGraph가 claude-code에
+    // promptedTools를 켜서 그래프가 정상으로 선다(모델 생성은 spawn을 안 하므로 CLI도 불필요).
+    // 진짜 왕복 검증은 model 링의 결정론적 심 테스트가 맡는다(여긴 CLI 없이 못 돌린다).
+    const { buildChatGraph } = await import("../src/chat");
+    const g = buildChatGraph("tools", "claude-code/sonnet");
+    expect(g.getGraph().nodes).toEqual(["model", "tools"]);
   });
 });
 

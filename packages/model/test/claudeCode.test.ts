@@ -17,8 +17,11 @@ import {
   EmptyConversationError,
   model,
   PROVIDERS,
+  parsePromptedToolCalls,
   parseResult,
   type RunCli,
+  renderToolProtocol,
+  type ToolSpec,
   ToolsUnsupportedError,
   toPrompt,
 } from "../src/index";
@@ -159,11 +162,14 @@ describe("claudeCodeChat", () => {
     );
   });
 
-  test("**supportsTools가 false다** — 어댑터 셋 중 유일하게 툴을 못 싣는다", () => {
+  test("**supportsTools는 기본 false, promptedTools를 켜면 true**", () => {
     expect(claudeCodeChat({ run: runner(ok("x")).run }).supportsTools).toBe(false);
+    expect(claudeCodeChat({ run: runner(ok("x")).run, promptedTools: true }).supportsTools).toBe(
+      true,
+    );
   });
 
-  test("**tools를 주면 던진다 — 조용히 무시하지 않는다**", async () => {
+  test("**tools를 주면 던진다(심이 꺼져 있을 때) — 조용히 무시하지 않는다**", async () => {
     const { calls, run } = runner(ok("ok"));
     await expect(
       claudeCodeChat({ run }).invoke([human("3+4는?")], {
@@ -193,6 +199,138 @@ describe("claudeCodeChat", () => {
       { role: "human", content: "2+2는?" },
       { role: "ai", content: "4입니다" },
     ]);
+  });
+});
+
+// ─── 길 B · 프롬프트 기반 툴 호출 심 (F2.4) ──────────────────────────────────────
+const ADD_SPEC: ToolSpec = {
+  name: "add",
+  description: "두 수를 더한다",
+  parameters: {
+    type: "object",
+    properties: { a: { type: "number" }, b: { type: "number" } },
+    required: ["a", "b"],
+  },
+};
+
+describe("renderToolProtocol — 툴 선언을 프롬프트 텍스트로", () => {
+  test("이름·설명·JSON Schema·호출 규약이 다 실린다", () => {
+    const text = renderToolProtocol([ADD_SPEC]);
+    expect(text).toContain("add");
+    expect(text).toContain("두 수를 더한다");
+    expect(text).toContain('"type":"number"'); // 파라미터 스키마가 그대로
+    expect(text).toContain("tool_calls"); // 모델이 뱉을 형식
+  });
+});
+
+describe("parsePromptedToolCalls — 모델 텍스트를 toolCalls로 되살린다", () => {
+  test("깔끔한 JSON 하나 → toolCall 하나(id는 우리가 붙인다), content는 빈다", () => {
+    const r = parsePromptedToolCalls('{"tool_calls":[{"name":"add","arguments":{"a":3,"b":4}}]}');
+    expect(r.toolCalls).toEqual([{ id: "call_1", name: "add", args: { a: 3, b: 4 } }]);
+    expect(r.content).toBe("");
+  });
+
+  test("한 번에 툴 둘 → id가 순서대로 call_1, call_2", () => {
+    const r = parsePromptedToolCalls(
+      '{"tool_calls":[{"name":"add","arguments":{"a":1,"b":2}},{"name":"multiply","arguments":{"a":3,"b":4}}]}',
+    );
+    expect(r.toolCalls.map((c) => [c.id, c.name])).toEqual([
+      ["call_1", "add"],
+      ["call_2", "multiply"],
+    ]);
+  });
+
+  test("```json``` 코드펜스로 감싸도 벗겨서 읽는다(모델이 규약을 자주 어긴다)", () => {
+    const r = parsePromptedToolCalls(
+      '```json\n{"tool_calls":[{"name":"add","arguments":{}}]}\n```',
+    );
+    expect(r.toolCalls).toEqual([{ id: "call_1", name: "add", args: {} }]);
+  });
+
+  test("툴 호출이 없으면 텍스트 전체가 최종 답(prose)", () => {
+    const r = parsePromptedToolCalls("답은 7입니다.");
+    expect(r.toolCalls).toEqual([]);
+    expect(r.content).toBe("답은 7입니다.");
+  });
+
+  test("arguments가 문자열이면 파싱하고, 깨졌으면 invalidArgs로 원문 보존(OpenAI 비대칭과 같은 처리)", () => {
+    const good = parsePromptedToolCalls(
+      '{"tool_calls":[{"name":"add","arguments":"{\\"a\\":3}"}]}',
+    );
+    expect(good.toolCalls[0]).toEqual({ id: "call_1", name: "add", args: { a: 3 } });
+
+    const broken = parsePromptedToolCalls('{"tool_calls":[{"name":"add","arguments":"{a:3"}]}');
+    expect(broken.toolCalls[0]).toEqual({
+      id: "call_1",
+      name: "add",
+      args: {},
+      invalidArgs: "{a:3",
+    });
+  });
+});
+
+describe("claudeCodeChat + promptedTools (길 B 왕복)", () => {
+  /** 턴마다 다음 stdout을 돌려주는 실행자. 왕복을 결정론적으로 관찰한다. */
+  function scriptedRunner(outputs: string[]) {
+    const calls: Array<{ args: string[]; input: string }> = [];
+    let i = 0;
+    const run: RunCli = async (args, input) => {
+      calls.push({ args, input });
+      const out = outputs[Math.min(i, outputs.length - 1)] ?? ok("");
+      i += 1;
+      return out;
+    };
+    return { calls, run };
+  }
+
+  test("텍스트로 툴을 부르고, 결과를 되먹이면 최종 답을 낸다 — 툴 루프가 우리 쪽에 남는다", async () => {
+    const { calls, run } = scriptedRunner([
+      ok('{"tool_calls":[{"name":"add","arguments":{"a":3,"b":4}}]}'),
+      ok("답은 7입니다."),
+    ]);
+    const m = claudeCodeChat({ run, promptedTools: true });
+
+    // 1턴: 모델이 텍스트로 add를 부른다 → toolCalls로 되살아난다.
+    const first = await m.invoke([human("3+4는?")], { tools: [ADD_SPEC] });
+    expect(first.toolCalls).toEqual([{ id: "call_1", name: "add", args: { a: 3, b: 4 } }]);
+    expect(first.content).toBe("");
+    // 시스템 프롬프트에 툴 규약이 실렸다.
+    const sys = calls[0]?.args[(calls[0]?.args.indexOf("--system-prompt") ?? -1) + 1] ?? "";
+    expect(sys).toContain("tool_calls");
+    expect(sys).toContain("add");
+
+    // 2턴: toolNode 역할을 우리가 대신 — 결과를 이력에 붙여 되먹인다.
+    const second = await m.invoke([human("3+4는?"), first, tool("call_1", "7")], {
+      tools: [ADD_SPEC],
+    });
+    expect(second.toolCalls).toBeUndefined(); // 산문 답 → toolsCondition이 END를 고른다
+    expect(second.content).toBe("답은 7입니다.");
+    // 되먹인 프롬프트에 어시스턴트의 이전 호출과 툴 결과가 보인다(모델이 자기 행동을 본다).
+    expect(calls[1]?.input).toContain("add");
+    expect(calls[1]?.input).toContain("Tool result: 7");
+  });
+
+  test("모델이 산문으로 답하면 toolCalls 없이 그대로 통과(툴 안 씀)", async () => {
+    const { run } = scriptedRunner([ok("툴 없이 바로 답합니다.")]);
+    const r = await claudeCodeChat({ run, promptedTools: true }).invoke([human("안녕")], {
+      tools: [ADD_SPEC],
+    });
+    expect(r.toolCalls).toBeUndefined();
+    expect(r.content).toBe("툴 없이 바로 답합니다.");
+  });
+});
+
+describe("toPrompt — 어시스턴트의 이전 툴 호출을 이력에 되살린다", () => {
+  test("toolCalls를 든 ai 메시지는 규약 JSON으로 펴진다(빈 content로 사라지지 않게)", () => {
+    const { prompt } = toPrompt([
+      human("3+4는?"),
+      ai("", undefined, [{ id: "call_1", name: "add", args: { a: 3, b: 4 } }]),
+      tool("call_1", "7"),
+    ]);
+    expect(prompt).toContain(
+      'Assistant: {"tool_calls":[{"name":"add","arguments":{"a":3,"b":4}}]}',
+    );
+    expect(prompt).toContain("Tool result: 7");
   });
 });
 

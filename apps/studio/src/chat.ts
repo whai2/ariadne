@@ -37,10 +37,9 @@ export interface ProviderInfo {
   /** 준비가 안 됐다면 무엇이 필요한지. */
   need: string;
   /**
-   * **툴 선언을 와이어에 실을 수 있나**(`ChatModel.supportsTools`와 같은 뜻).
-   *
-   * 모델을 만들어 보지 않고 `format`만으로 안다 — 자격증명이 없어도 UI가 미리 경고할 수 있게.
-   * 안 그러면 사용자가 claude-code로 tools 모양을 고르고 **보낸 뒤에야** 예외를 본다.
+   * **툴 선언을 와이어에 네이티브로 실을 수 있나.** claude-code는 못 하고(false), 그래서
+   * 프롬프트 심(길 B)으로 흉내 낸다 — 툴을 아예 못 쓴다는 뜻이 **아니다**. UI가 이 플래그로
+   * "네이티브 vs 흉내" 안내를 띄운다. `format`만으로 아니까 자격증명이 없어도 미리 안다.
    */
   tools: boolean;
   /** 모델 입력칸의 placeholder. 없으면 사용자가 직접 적어야 한다. */
@@ -92,7 +91,8 @@ export function statusOf(id: string, env: Record<string, string | undefined>): P
     id,
     name: entry.name,
     format: entry.format,
-    // claude-code만 못 한다 — `-p`는 result 문자열 하나뿐이라 툴 선언을 실을 자리가 없다(F2.1).
+    // claude-code만 네이티브가 안 된다 — `-p`는 result 문자열 하나뿐이라 자리가 없다(F2.1).
+    // 대신 프롬프트 심으로 흉내 낸다(F2.4). 그래서 이건 "네이티브인가"이지 "쓸 수 있나"가 아니다.
     tools: entry.format !== "claudeCode",
     ...(SUGGESTED[id] === undefined ? {} : { suggested: SUGGESTED[id] }),
   };
@@ -219,7 +219,7 @@ export const SHAPES: Array<{ id: ShapeId; name: string; description: string; cal
     id: "tools",
     name: "툴 사용 (ReAct)",
     description:
-      "model ⇄ tools 루프(F2). 모델에게 add·multiply·now 선언을 실어 보내면 **모델이 필요한 걸 직접 골라** 부르고, toolNode가 zod로 인자를 검증해 실행한 뒤 결과를 들려 다시 model로 보낸다. 몇 번 도는지는 모델이 정한다 — 툴을 안 쓰면 스텝 1개로 끝난다. '지금 몇 시야?'나 '3+4랑 5×6'을 물어보라. **claude-code는 못 쓴다**(와이어에 툴 선언을 실을 자리가 없다).",
+      "model ⇄ tools 루프(F2). 모델에게 add·multiply·now 선언을 실어 보내면 **모델이 필요한 걸 직접 골라** 부르고, toolNode가 zod로 인자를 검증해 실행한 뒤 결과를 들려 다시 model로 보낸다. 몇 번 도는지는 모델이 정한다 — 툴을 안 쓰면 스텝 1개로 끝난다. '지금 몇 시야?'나 '3+4랑 5×6'을 물어보라. claude-code는 와이어에 툴을 못 실어서 **프롬프트로 흉내** 낸다(길 B) — 툴 루프는 그대로 우리 그래프 안에서 돈다.",
     calls: 2,
   },
 ];
@@ -246,11 +246,16 @@ export function parseTasks(text: string, fallback: string): string[] {
 
 /** 모양 하나를 그래프로 세운다. `spec`이 없으면 노드가 없는 **구조만** 필요한 경우다. */
 export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?: string } = {}) {
+  // 툴 모양에선 **모든** 프로바이더에 promptedTools를 켠다 — 네이티브 어댑터(anthropic·openai)는
+  // 무시하고 와이어에 싣고, claude-code만 이걸 보고 프롬프트로 흉내 낸다(길 B). 그래서
+  // 프로바이더별 분기가 필요 없다 — claude-code도 툴 모양에서 그냥 돈다.
+  const modelConfig = shape === "tools" ? { promptedTools: true } : {};
+
   // spec이 없으면 그림용이다 — 진짜 모델 대신 자리표시자를 꽂는다(자격증명이 필요 없게).
   const ask = async (msgs: BaseMessage[], sys: string, tools?: ToolSpecShape[]) =>
     spec === undefined
       ? ai("(미리보기)")
-      : model(spec, sys === "" ? {} : { system: sys }).invoke(
+      : model(spec, { ...modelConfig, ...(sys === "" ? {} : { system: sys }) }).invoke(
           msgs,
           // 툴을 쓰는 모양에서만 선언을 싣는다. **여기가 두 링이 실제로 만나는 유일한 자리**다 —
           // `@ariadne/tools`의 ToolSpecShape가 `@ariadne/model`의 ToolSpec로 통하는지

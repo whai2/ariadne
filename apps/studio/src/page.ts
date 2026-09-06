@@ -202,17 +202,17 @@ export const PAGE = `<!doctype html>
     refreshToolWarning();
   }
 
-  // 툴을 못 싣는 프로바이더(claude-code)로 tools 모양을 고르면 **보내기 전에** 알려준다.
-  // 안 그러면 요청을 보내고 나서야 ToolsUnsupportedError를 본다.
+  // 네이티브 툴이 안 되는 프로바이더(claude-code)로 tools 모양을 고르면, 프롬프트로 흉내
+  // 낸다는 걸 **미리** 알려준다. 막는 게 아니라 안내다 — 실제로 돌긴 돈다(길 B).
   function refreshToolWarning() {
     var p = currentProvider();
     var box = document.getElementById("toolwarn");
     if (!box) return;
-    var bad = currentShape() === "tools" && p && !p.tools;
-    box.classList.toggle("hidden", !bad);
-    if (bad) {
-      box.textContent = "⚠ " + p.name + "는 툴을 못 쓴다 — 와이어에 툴 선언을 실을 자리가 없어" +
-        " 이 모양은 던진다. 툴이 되는 프로바이더를 고르라.";
+    var prompted = currentShape() === "tools" && p && !p.tools;
+    box.classList.toggle("hidden", !prompted);
+    if (prompted) {
+      box.textContent = "ℹ " + p.name + "는 툴을 네이티브로 못 실어서 프롬프트로 흉내 낸다" +
+        " — 툴 루프는 그대로 우리 그래프 안에서 돌지만, 네이티브(anthropic·openai)보다 덜 안정적이다.";
     }
   }
 
