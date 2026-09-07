@@ -233,8 +233,19 @@ F1의 벽(`content`가 string이라 툴 호출을 못 담음)을 정면으로 �
 - **검증:** 250 pass / 4 skip / 0 fail (core 81 · tools 28 무수정 · **model 97** · **studio 44**). ([노트 20](notes/20-f2_4-claude-code-prompted-tools.md))
 - **벽 → 다음:** 네 어댑터 전부가 툴 루프에 참여한다(셋 네이티브 + 하나 심). 조립 네 줄이 여전히 세 곳에서 반복 → **F3의 동기**. 그때도 루프는 우리 엔진 안(이 커밋이 지킨 핵심).
 
-### F3 · 에이전트 링 — `@ariadne/agent` (예정)
+### F3 · 에이전트 링 — `@ariadne/agent`
 model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸 보이는 단계 — 새 실행 개념 없이 StateGraph 조립으로 끝나야 한다. **루프는 우리 엔진 안에 남는다**(F2.4가 MCP 위임과 갈라 지킨 핵심). MCP/세션/승인 게이트로 claude-code를 확장하는 SDK 경로는 여기서 다룬다.
+
+#### F3.1 · `createAgent` — ReAct 네 줄을 접는다 — [x] 완료
+- **도는 것:** `bun run --filter '@ariadne/agent' example` — `createAgent({ model, tools })`가 컴파일된 그래프를 돌려주고, 가짜 모델이 한 턴에 툴 둘을 부르면 `toolNode`가 병렬 실행해 되돌린다. **자격증명 0 · 네트워크 0.** 진짜 모델 경로는 스튜디오 챗의 `tools` 모양이 그대로 이어받았다.
+- **F3의 논지를 코드로:** F2.3/F2.4가 **네 곳에서 글자까지 똑같이** 쓰던 ReAct 조립(`addNode("tools")`+`addEdge(START,"model")`+`addConditionalEdges(…toolsCondition)`+`addEdge("tools","model")`)을 접었다. 반환이 **`CompiledGraph`**라 스튜디오의 `stream()`·`getGraph()`가 그대로 붙는다 — 에이전트가 특별한 실행기가 아니라 **특수한 그래프**임을 못박는다. `createAgent`는 그 네 줄 **이상을 하지 않는다**(새 채널·superstep·엔진 수정 0).
+- **발견 · run 경계 = 마지막 human 메시지.** 종료 불변식(“답 없는 `tool_use`를 이력에 안 남긴다” → 마지막 호출에 툴을 안 준다)을 스튜디오는 `turns` 카운터 채널로 셌는데, 다시 보니 **필요 없었다.** "이번 run에서 툴을 몇 번 불렀나"는 **마지막 human 이후의 `toolCalls` 실린 AI 메시지 수**이고, 그 카운터가 **`messages` 채널 안에 이미 있다.** 그래서 기본 에이전트는 `MessagesState` 하나로 돌고(커스텀 스키마 불필요), 스튜디오의 per-turn `turns`와 **동작이 정확히 같다.** ("채널이 유일한 공유 가변 상태"가 한 번 더 옳았다.)
+- **판단 셋:** ① `promptedTools`는 **모델 생성**에 남긴다(트랜스포트 문제이지 루프 문제가 아니다) → 에이전트는 트랜스포트-무지. ② 툴을 줬는데 `supportsTools===false`면 **구성 시점에 던진다**(`ModelCannotUseToolsError`) — 그래프가 조용히 툴 노드에 안 가는 걸 첫 호출이 아니라 세우는 순간 막는다. ③ 툴이 없으면 **단발 호출**(`START→model→END`) — 같은 함수가 모양으로 갈린다.
+- **깨진 규칙(의도적):** F2.2의 "링은 서로를 모른다"의 **첫 예외** — 에이전트는 model·tools를 둘 다 import한다(엮는 게 존재 이유). 대신 두 링이 만나는 접점(`toolSpecs()`→`invoke({tools})`)이 **스튜디오에서 이 링으로 이사**했고, 이제 `@ariadne/agent`의 tsc가 검사한다. core는 여전히 deps 0.
+- **이관/남김:** 스튜디오 챗의 `tools` 모양은 `createAgent<ChatState>(schema: chatSchema)`로 접었다(langgraph `create_react_agent(state_schema=…)`와 같은 이유). tools 예제·갤러리의 `react`·`react-repair`는 **네 줄과 에러 정책을 보여주는 교보재**라 남겼다(접으면 가르치려는 걸 숨긴다).
+- **안 한 것(정직):** MCP/세션/승인 게이트(claude-code SDK 확장 — F3 다음 커밋), 주입 상태·스토어, 스트리밍, 모델 스펙 문자열 오버로드(지금은 `ChatModel`만).
+- **검증:** 257 pass / 4 skip / 0 fail (core 81 · tools 28 · model 97 · **agent 7** · studio 44 — core·tools·model·studio 무수정). ([노트 21](notes/21-f3_1-agent-ring.md))
+- **벽 → 다음:** 에이전트가 아는 건 **한 번의 자율 루프**뿐이다. 세션(진짜 멀티턴)·승인 게이트·MCP는 `ChatModel.invoke`보다 큰 인터페이스를 요구한다 — F3의 남은 커밋.
 
 ### F4 · 메모리 링 — `@ariadne/memory` (예정)
 대화 히스토리 + RAG. 영속성(checkpointer)은 core의 범위 밖이었으므로 여기서 처음 부딪힌다.

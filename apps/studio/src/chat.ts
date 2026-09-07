@@ -4,6 +4,7 @@
 // `stream()`으로 돌린다 — 그래야 스텝·채널 관찰이 챗에서도 그대로 붙는다.
 // (그게 이 스튜디오가 일반 챗 UI와 다른 점이다.)
 
+import { createAgent } from "@ariadne/agent";
 import {
   ai,
   type BaseMessage,
@@ -17,14 +18,8 @@ import {
   type StateSchema,
   type StepUpdate,
 } from "@ariadne/core";
-import { listProviders, model, PROVIDERS } from "@ariadne/model";
-import {
-  DEMO_TOOLS,
-  type ToolSpecShape,
-  toolNode,
-  toolSpecs,
-  toolsCondition,
-} from "@ariadne/tools";
+import { type ChatModel, listProviders, model, PROVIDERS } from "@ariadne/model";
+import { DEMO_TOOLS } from "@ariadne/tools";
 
 /** 드롭다운 한 줄. 키가 있는지까지 알려줘서 고르기 전에 알 수 있게 한다. */
 export interface ProviderInfo {
@@ -161,16 +156,15 @@ export type ShapeId = "single" | "chain" | "parallel" | "loop" | "dispatch" | "t
  *
  * `now`가 있는 게 중요하다 — **모델이 혼자서는 못 하는 일**이라 "지금 몇 시야?"를 물으면
  * 툴을 안 부르고는 답할 수가 없다. 산술 둘은 한 턴에 호출 여럿이 나가는 걸 보여준다.
+ *
+ * (선언 문자열로 바꾸는 `toolSpecs`도, 루프 상한도 이제 `@ariadne/agent`가 진다 — 여긴 툴 목록만.)
  */
-const CHAT_TOOL_SPECS: ToolSpecShape[] = toolSpecs(DEMO_TOOLS);
+const CHAT_TOOLS = DEMO_TOOLS;
 
 /**
- * 몇 번째 모델 호출까지 툴을 쥐여줄 것인가.
- *
- * **조건부 엣지로 루프를 끊지 않는 이유가 여기 있다.** 툴 호출이 실린 AI 메시지를 남긴 채
- * 끊으면 답 없는 `tool_use`가 이력에 남고, 그 이력을 그대로 싣는 **다음 턴이 400**이다.
- * 대신 마지막 호출에는 툴 선언을 **안 준다** — 못 부르니 산문으로 답하고, `toolsCondition`이
- * 자연히 END를 골라 이력이 항상 온전한 상태로 끝난다.
+ * 한 턴에 모델이 툴을 부를 수 있는 최대 라운드. 상한을 넘으면 마지막 호출엔 툴을 안 줘
+ * 이력이 답 없는 `tool_use` 없이 끝난다(F2.3의 불변식). **이 강제를 이제 `createAgent`가
+ * 진다** — 여긴 그 값을 정해 넘길 뿐이다.
  */
 const MAX_TOOL_ROUNDS = 2;
 
@@ -246,26 +240,41 @@ export function parseTasks(text: string, fallback: string): string[] {
 
 /** 모양 하나를 그래프로 세운다. `spec`이 없으면 노드가 없는 **구조만** 필요한 경우다. */
 export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?: string } = {}) {
-  // 툴 모양에선 **모든** 프로바이더에 promptedTools를 켠다 — 네이티브 어댑터(anthropic·openai)는
-  // 무시하고 와이어에 싣고, claude-code만 이걸 보고 프롬프트로 흉내 낸다(길 B). 그래서
-  // 프로바이더별 분기가 필요 없다 — claude-code도 툴 모양에서 그냥 돈다.
-  const modelConfig = shape === "tools" ? { promptedTools: true } : {};
+  // 툴 모양은 **에이전트 링이 접는다.** model ⇄ tools ReAct 네 줄(+ 루프 상한 + toolSpecs)이
+  // 전부 `createAgent` 한 번으로 들어간다 — 스튜디오가 손으로 쓰던 자리가 링으로 옮겨갔다(F3.1).
+  // **여기가 두 링(model·tools)이 만나던 유일한 자리였는데, 그 접점도 함께 @ariadne/agent로
+  // 이사했다** — 이제 그 링의 tsc가 구조적 호환을 검사한다.
+  if (shape === "tools") {
+    // 모든 프로바이더에 promptedTools를 켠다: 네이티브(anthropic·openai)는 무시하고 와이어에
+    // 싣고, claude-code만 이걸 보고 프롬프트로 흉내 낸다(길 B). 그래서 프로바이더별 분기가 없다.
+    // spec이 없으면 그림용이라 자리표시자 모델을 꽂는다(자격증명 없이 구조만).
+    const previewModel: ChatModel = {
+      provider: "preview",
+      modelId: "preview",
+      supportsTools: true,
+      async invoke() {
+        return ai("(미리보기)");
+      },
+    };
+    const chatModel = spec === undefined ? previewModel : model(spec, { promptedTools: true });
+    return createAgent<ChatState>({
+      model: chatModel,
+      tools: CHAT_TOOLS,
+      maxToolRounds: MAX_TOOL_ROUNDS,
+      schema: chatSchema,
+      ...(options.system === undefined ? {} : { system: options.system }),
+    });
+  }
 
   // spec이 없으면 그림용이다 — 진짜 모델 대신 자리표시자를 꽂는다(자격증명이 필요 없게).
-  const ask = async (msgs: BaseMessage[], sys: string, tools?: ToolSpecShape[]) =>
+  const ask = async (msgs: BaseMessage[], sys: string) =>
     spec === undefined
       ? ai("(미리보기)")
-      : model(spec, { ...modelConfig, ...(sys === "" ? {} : { system: sys }) }).invoke(
-          msgs,
-          // 툴을 쓰는 모양에서만 선언을 싣는다. **여기가 두 링이 실제로 만나는 유일한 자리**다 —
-          // `@ariadne/tools`의 ToolSpecShape가 `@ariadne/model`의 ToolSpec로 통하는지
-          // 기계적으로 검사하는 게 이 파일의 tsc다(둘은 서로를 import하지 않는다).
-          tools === undefined ? {} : { tools },
-        );
+      : model(spec, sys === "" ? {} : { system: sys }).invoke(msgs);
 
   /** **답변하는** 노드용. 사용자 System 프롬프트를 물려받는다. */
-  const call = (msgs: BaseMessage[], nudge?: string, tools?: ToolSpecShape[]) =>
-    ask(msgs, [options.system, nudge].filter(Boolean).join("\n\n"), tools);
+  const call = (msgs: BaseMessage[], nudge?: string) =>
+    ask(msgs, [options.system, nudge].filter(Boolean).join("\n\n"));
 
   /**
    * **제어하는** 노드용(디스패처 등). 답변이 아니라 **계획**을 받아낸다.
@@ -308,20 +317,6 @@ export function buildChatGraph(shape: ShapeId, spec?: string, options: { system?
     g.addNode("model", async (s) => ({ messages: [await call(s.messages)], turns: 1 }));
     g.addEdge(START, "model");
     g.addConditionalEdges("model", (s) => (s.turns < 2 ? "model" : END), ["model", END]);
-  } else if (shape === "tools") {
-    // 위 'loop'와 그래프 모양이 거의 같은데 **누가 루프를 끝낼지**가 다르다.
-    // loop는 우리가 turns로 세고, 여기선 **모델이 툴을 그만 부르면** 끝난다(그게 ReAct다).
-    g.addNode("model", async (s) => ({
-      messages: [
-        await call(s.messages, undefined, s.turns < MAX_TOOL_ROUNDS ? CHAT_TOOL_SPECS : undefined),
-      ],
-      turns: 1,
-    }));
-    // 노드 이름이 "tools"인 건 toolsCondition이 그 문자열을 돌려주기 때문이다.
-    g.addNode("tools", toolNode<ChatState>(DEMO_TOOLS));
-    g.addEdge(START, "model");
-    g.addConditionalEdges("model", toolsCondition, ["tools", END]);
-    g.addEdge("tools", "model");
   } else {
     // 분업: dispatch가 일을 쪼개고, Send가 **워커마다 다른 payload**를 실어 보낸다(V6).
     // 병렬 모양과의 차이가 여기다 — 저긴 두 노드가 같은 s.messages를 읽는다.

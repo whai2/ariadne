@@ -15,6 +15,16 @@
       "name": "@ariadne/studio",
       "version": "0.0.0",
       "dependencies": {
+        "@ariadne/agent": "workspace:*",
+        "@ariadne/core": "workspace:*",
+        "@ariadne/model": "workspace:*",
+        "@ariadne/tools": "workspace:*",
+      },
+    },
+    "packages/agent": {
+      "name": "@ariadne/agent",
+      "version": "0.0.0",
+      "dependencies": {
         "@ariadne/core": "workspace:*",
         "@ariadne/model": "workspace:*",
         "@ariadne/tools": "workspace:*",
@@ -44,6 +54,8 @@
   },
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.124.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-cN5O8i9UVxHeOQAzj/XjshWXG8KiibJDw9OGpH2Z/eR3n/RBxdoLxDJOcfqAJWvjaMDFfHTBADU04hWRJVkDyA=="],
+
+    "@ariadne/agent": ["@ariadne/agent@workspace:packages/agent"],
 
     "@ariadne/core": ["@ariadne/core@workspace:packages/core"],
 

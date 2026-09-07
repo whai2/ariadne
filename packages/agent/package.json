@@ -1,0 +1,22 @@
+{
+  "name": "@ariadne/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ariadne 에이전트 링 — model+tools 자율 루프를 core 위의 그래프로 조립한다",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "example": "bun run examples/react.ts"
+  },
+  "dependencies": {
+    "@ariadne/core": "workspace:*",
+    "@ariadne/model": "workspace:*",
+    "@ariadne/tools": "workspace:*"
+  }
+}
