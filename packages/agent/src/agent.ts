@@ -95,6 +95,11 @@ function toolRoundsSinceLastHuman(messages: readonly BaseMessage[]): number {
  *
  * 반환이 `CompiledGraph`인 게 요점이다 — 에이전트는 **특별한 실행기가 아니라 특별한 그래프**라,
  * 스튜디오의 `stream()`·`getGraph()` 관찰이 그대로 붙는다.
+ *
+ * **왜 `class Agent`가 아니라 함수인가:** 지금 에이전트는 담을 상태·수명주기가 없다
+ * (불변 설정 → 불변 그래프, 루프 카운터마저 messages 채널에서 센다). 세션·MCP·승인 게이트가
+ * 붙어 `this`에 얹을 게 처음 생기면 그래프를 감싼 객체로 승격한다 — 그때도 그래프는 계속
+ * 노출한다(감추면 관찰이 깨진다). 자세한 판단·확장 경로: docs/notes/21-f3_1-agent-ring.md.
  */
 export function createAgent<S extends MessagesState = MessagesState>(
   config: AgentConfig<S>,
