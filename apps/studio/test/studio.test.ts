@@ -331,50 +331,20 @@ describe.skipIf(!hasCli)("Chat → 진짜 모델 (구독 자격증명)", () => {
   }, 180_000);
 });
 
-describe("클라이언트 JS 회귀 가드", () => {
-  async function clientScript(): Promise<string> {
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1] ?? "");
-    return blocks.at(-1) ?? "";
-  }
-
-  it("전역 이름이 window의 내장 속성과 충돌하지 않는다", async () => {
-    // `var history = []`는 window.history(History 객체)를 못 덮는다 → .map()이 TypeError.
-    // 스크립트 맨 위에서 터지면 **아래 전부가 안 돌아** 빈 화면만 남는다. 실제로 당했다.
-    const script = await clientScript();
-    const declared = [
-      ...script.matchAll(/^\s*(?:var|let|const|function)\s+([A-Za-z_$][\w$]*)/gm),
-    ].map((m) => m[1] as string);
-
-    const RESERVED = [
-      "history",
-      "location",
-      "name",
-      "top",
-      "parent",
-      "self",
-      "status",
-      "length",
-      "origin",
-      "closed",
-      "frames",
-      "opener",
-      "screen",
-      "navigator",
-    ];
-    const clashes = declared.filter((d) => RESERVED.includes(d));
-    expect(clashes, `window 내장과 충돌: ${clashes.join(", ")}`).toEqual([]);
-  });
-
-  it("페이지 HTML은 캐시되지 않는다 — 고쳐도 예전 화면이 나오면 원인 찾기가 지옥이다", async () => {
+describe("SPA 서빙", () => {
+  // S10에서 UI가 React+Vite(web/)로 옮겨갔다 — 인라인 <script> 규약을 검사하던 가드들은
+  // 대상 자체가 사라져 제거했다. 그 로직은 이제 web/src의 .tsx에 산다. 서버가 지키는 계약만 남긴다.
+  it("GET / 는 HTML을 no-store로 준다(빌드 전이면 안내 페이지)", async () => {
     const res = await studio.fetch(new Request("http://x/"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
     expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.text()).toContain("Ariadne Studio");
   });
 
-  it("mermaid 없이도 나머지가 돌도록 가드가 있다", async () => {
-    const script = await clientScript();
-    // CDN 실패가 드롭다운까지 죽이면 안 된다.
-    expect(script).toContain('typeof mermaid !== "undefined"');
+  it("모르는 API 경로는 404", async () => {
+    const res = await studio.fetch(new Request("http://x/api/zzz"));
+    expect(res.status).toBe(404);
   });
 });
 
@@ -398,11 +368,7 @@ describe("조건부 엣지가 그림에 나온다 (path_map)", () => {
     const { edges } = await graphOf("rag");
     expect(edges).toContainEqual({ from: "retrieve", to: "summarize", kind: "conditional" });
   });
-
-  it("mermaid로 옮길 때 조건부는 점선이 된다", async () => {
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    expect(html).toContain('e.kind === "conditional" ? " -.-> " : " --> "');
-  });
+  // (조건부→점선 변환은 web/src/components/Graph.tsx로 옮겨갔다 — HTML 문자열 검사 제거.)
 });
 
 describe("챗 그래프 모양 선택", () => {
@@ -477,17 +443,6 @@ describe.skipIf(!hasCli)("모양별 실제 실행 (구독 자격증명)", () => 
     expect(res.steps[0]?.nodes.sort()).toEqual(["critical", "plain"]);
     expect(res.messages).toHaveLength(2); // 두 쓰기가 messages 리듀서로 합쳐졌다
   }, 180_000);
-});
-
-describe("UI 문구가 실제 동작과 어긋나지 않는다", () => {
-  it("모양이 여러 개인데 특정 모양을 단정하지 않는다", async () => {
-    // S7 전엔 챗이 START→model→END 하나였고 문구도 그렇게 적혀 있었다.
-    // 모양을 고를 수 있게 된 뒤에도 그 문구가 남아, 병렬을 골라도 "START→model→END"라고
-    // 우겼다. 그림과 설명이 어긋나면 관찰 도구로서 실격이다.
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    const footer = html.slice(html.indexOf("대화도"), html.indexOf("대화도") + 200);
-    expect(footer).not.toContain("START→model→END");
-  });
 });
 
 describe("분업 모양 (Send 팬아웃)", () => {
@@ -570,18 +525,8 @@ describe("툴 모양 (F2.3 — 챗이 진짜 툴을 쓴다)", () => {
     expect(list.find((p) => p.id === "groq")?.tools).toBe(true);
   });
 
-  it("UI가 보내기 **전에** 흉내 모드임을 안내한다(막는 게 아니라)", async () => {
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    expect(html).toContain('currentShape() === "tools" && p && !p.tools');
-    expect(html).toContain("프롬프트로 흉내 낸다"); // 예전엔 "못 쓴다/던진다"였다(F2.4 대체)
-  });
-
-  it("툴 호출은 content가 비어 있어서, 안 그리면 빈 말풍선만 남는다", async () => {
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    // 로그가 toolCalls와 toolCallId를 실제로 렌더한다.
-    expect(html).toContain("m.toolCalls || []");
-    expect(html).toContain('m.toolCallId ? " → #" + m.toolCallId : ""');
-  });
+  // (흉내-모드 안내와 툴 호출 렌더는 web/src의 React로 옮겨갔다 — HTML 문자열 검사 제거.
+  //  claude-code=false·anthropic=true 같은 **API 데이터** 계약은 위에서 계속 검사한다.)
 
   it("**claude-code도 툴 모양에서 빌드된다** — 더는 안 막힌다(F2.4, promptedTools)", async () => {
     // F2.3에선 여기서 ToolsUnsupportedError로 500이었다. 이제 buildChatGraph가 claude-code에
@@ -620,16 +565,6 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("툴 모양 실제 실행 (API �
     expect(res.messages.at(-1)?.toolCalls).toBeUndefined();
     expect(res.messages.at(-1)?.content).not.toBe("");
   }, 180_000);
-});
-
-describe("한글 입력 (IME) 회귀 가드", () => {
-  it("조합 중 Enter는 전송하지 않는다", async () => {
-    // 없으면 마지막 글자를 확정하는 Enter가 전송까지 트리거해서,
-    // "노션과 클릭업 연결"을 보내고 남은 "결"이 두 번째 메시지로 따로 날아간다.
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    expect(html).toContain("e.isComposing");
-    expect(html).toContain("229"); // isComposing 없는 브라우저 폴백
-  });
 });
 
 describe("Agents (사이드바) — S9", () => {
@@ -694,11 +629,6 @@ describe("Agents (사이드바) — S9", () => {
     expect(res.status).toBe(400);
   });
 
-  it("페이지에 사이드바 + 에이전트 뷰가 있다", async () => {
-    const html = await (await studio.fetch(new Request("http://x/"))).text();
-    expect(html).toContain('class="sidebar"');
-    expect(html).toContain('id="agentnav"'); // 에이전트 목록이 채워질 자리
-    expect(html).toContain('id="view-agent"'); // 상세 뷰
-    expect(html).toContain("createAgent"); // 상세에 무엇이 그래프를 세우는지 적혀 있다
-  });
+  // (사이드바·에이전트 상세는 web/src의 React 컴포넌트다 — DOM 문자열 검사 대신
+  //  서버 계약(/api/agents, /api/agents/graph, /api/agents/chat)을 위에서 검사한다.)
 });

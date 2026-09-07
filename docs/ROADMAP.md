@@ -134,6 +134,11 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
   - **core를 진화시키지 않았다.** 에이전트 그래프도 `getGraph()`·`stream()`으로 관찰되는 평범한 그래프라 S1~S2 관찰 표면이 그대로 통했다("agent=특수한 그래프"가 관찰 층에서 회수됨).
   - `/api/agents/graph`는 **preview 모델**로 그려 자격증명 없이 구조가 뜬다. 기본 claude-code/sonnet이라 **API 키 없이** 진짜 에이전트가 돈다(툴이 있으면 promptedTools 자동, 사이드바가 "툴=프롬프트 흉내" 칩으로 알림). 렌더링(`msgHtml`)·IME 처리(`bindComposer`)를 자유 Chat과 공유해 기존 44 테스트 무수정.
   - **실호출 검증(실제 CLI, 키 0):** timekeeper `now()` · calculator `add·multiply` 병렬 → 둘 다 model→tools→model 왕복 성공. ([노트 22](notes/22-s9-agent-sidebar.md))
+- [x] **S10 · React + Vite + Tailwind 재구축** — 스튜디오를 배포용 admin 제품으로. 바닐라 `page.ts`(빌드 0) → **React/Vite/Tailwind 빌드 앱**. Mastra 플레이그라운드를 레퍼런스로 삼되 **코드는 안 가져오고 스택·디자인 언어만 차용**(그들 UI는 Mastra 서버 계약에 묶여 죽은 화면이 딸려온다). 좌측 사이드바 + 다크 테마.
+  - `apps/studio`를 갈랐다: `src/`(Bun API — **엔드포인트 무수정**, `page.ts`만 삭제 + dist 서빙) / `web/`(React UI). **서버가 UI-무지**였던(S9) 덕에 클라이언트를 통째로 바꿔도 엔드포인트·그 테스트가 살아남았다.
+  - UI는 서버 코드를 import 안 함(브라우저 vs Bun) → `web/src/api.ts`가 응답 모양을 다시 적음. mermaid는 CSS `!important` 대신 `themeVariables`로 다크.
+  - **제거(정직):** 옛 바닐라 클라이언트 JS 문자열을 검사하던 가드들 — 대상이 `.tsx`로 옮겨가 사라짐(로직은 컴포넌트에 이식). biome CSS 파서에 `tailwindDirectives` 켬.
+  - **헤드리스 크롬으로 실제 렌더 확인.** 256 pass / 4 skip. ([노트 23](notes/23-s10-react-studio.md))
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.

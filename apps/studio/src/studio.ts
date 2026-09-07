@@ -2,7 +2,43 @@ import type { BaseMessage, CompiledGraph, StepUpdate } from "@ariadne/core";
 import { agentInfo, agents, agentTurn, buildAgentGraph } from "./agents";
 import { buildChatGraph, chatTurn, providerList, SHAPES, type ShapeId } from "./chat";
 import type { Example } from "./examples";
-import { PAGE } from "./page";
+
+/** Vite 빌드 산출물. `bun run studio`가 `vite build`를 먼저 돌려 여기에 채운다. */
+const DIST_DIR = `${import.meta.dir}/../dist`;
+
+/** 빌드 전(테스트·개발) `/`에 뜨는 안내. UI는 `bun run studio`로 빌드해 서빙한다. */
+const DEV_PLACEHOLDER = `<!doctype html><html lang="ko"><head><meta charset="utf-8"/>
+<title>Ariadne Studio</title></head><body style="font:14px system-ui;background:#0d0d0f;color:#e9e9ec;padding:40px">
+<h1>Ariadne Studio</h1><p>UI가 아직 빌드되지 않았다. <code>bun run studio</code>(vite build + 서버) 또는
+개발 중이면 <code>bun run --filter '@ariadne/studio' dev:ui</code>(Vite HMR).</p></body></html>`;
+
+const CONTENT_TYPE: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  svg: "image/svg+xml",
+  json: "application/json",
+  ico: "image/x-icon",
+};
+
+/** 빌드된 SPA 자산을 서빙한다. 없으면 `/`엔 안내를, 그 외엔 404. */
+async function serveStatic(pathname: string): Promise<Response> {
+  const rel = pathname === "/" ? "/index.html" : pathname;
+  const file = Bun.file(`${DIST_DIR}${rel}`);
+  if (await file.exists()) {
+    const ext = rel.split(".").pop() ?? "";
+    const type = CONTENT_TYPE[ext] ?? "application/octet-stream";
+    return new Response(file, {
+      headers: { "content-type": type, "cache-control": "no-store" },
+    });
+  }
+  if (pathname === "/") {
+    return new Response(DEV_PLACEHOLDER, {
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  return new Response("Not found", { status: 404 });
+}
 
 /** 에러를 사람이 읽을 수 있게. 스택 대신 메시지만 — 대개 "키가 없다"류다. */
 function describe(e: unknown): string {
@@ -15,8 +51,9 @@ export interface Studio {
 }
 
 /**
- * 최소 스튜디오. 두 가지를 한다 — **대화**와 **관찰**.
- * - GET  /               → 브라우저 UI(HTML)
+ * 스튜디오 서버. **API를 맡고 빌드된 React UI(dist)를 서빙한다.**
+ * - GET  /               → 빌드된 SPA(index.html) 또는 안내
+ * - GET  /assets/*       → 빌드 자산(js/css)
  * - GET  /api/providers  → 프로바이더 드롭다운(어느 게 지금 쓸 수 있는지까지)
  * - GET  /api/shapes     → 챗이 돌 수 있는 그래프 모양들
  * - GET  /api/chat/graph?shape → 그 모양의 구조(보내기 전에 그림을 볼 수 있게)
@@ -52,17 +89,6 @@ export function createStudio(examples: Example[]): Studio {
   return {
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
-
-      if (req.method === "GET" && url.pathname === "/") {
-        return new Response(PAGE, {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            // 개발 서버는 절대 캐시하면 안 된다 — 코드를 고치고 새로고침했는데
-            // 예전 화면이 나오면 원인 찾기가 지옥이다.
-            "cache-control": "no-store",
-          },
-        });
-      }
 
       if (req.method === "GET" && url.pathname === "/api/providers") {
         return Response.json(providerList());
@@ -193,6 +219,11 @@ export function createStudio(examples: Example[]): Studio {
           return Response.json({ error: describe(e), steps }, { status: 500 });
         }
         return Response.json({ steps });
+      }
+
+      // API가 아닌 GET은 빌드된 SPA 자산으로 — /, /assets/*.
+      if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
+        return serveStatic(url.pathname);
       }
 
       return new Response("Not found", { status: 404 });
