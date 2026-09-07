@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type AgentInfo, api } from "./api";
+import { useTheme } from "./theme";
 import { AgentView } from "./views/AgentView";
 import { ChatView } from "./views/ChatView";
 import { ExamplesView } from "./views/ExamplesView";
@@ -43,6 +44,7 @@ function NavItem({
 export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [view, setView] = useState<View>({ kind: "chat" });
+  const { theme, toggle } = useTheme();
 
   useEffect(() => {
     api.agents().then((list) => {
@@ -94,6 +96,15 @@ export function App() {
           title="Examples"
           subtitle="그래프 갤러리"
         />
+
+        <button
+          type="button"
+          onClick={toggle}
+          className="mt-auto flex items-center gap-2 rounded-md px-2.5 py-2 text-left font-semibold text-muted hover:bg-surface-2 hover:text-fg"
+        >
+          <span>{theme === "dark" ? "☀" : "🌙"}</span>
+          <span>{theme === "dark" ? "라이트 테마" : "다크 테마"}</span>
+        </button>
       </nav>
 
       <main className="flex-1 overflow-y-auto">

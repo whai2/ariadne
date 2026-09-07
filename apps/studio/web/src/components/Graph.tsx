@@ -1,21 +1,26 @@
 import mermaid from "mermaid";
 import { useEffect, useId, useState } from "react";
 import type { GraphView } from "../api";
+import { type Theme, useTheme } from "../theme";
 
-// 다크 팔레트를 themeVariables로 준다 — CSS !important로 SVG를 덮는 것보다 mermaid-정석이다.
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "base",
-  securityLevel: "loose",
-  themeVariables: {
+// 팔레트를 CSS !important로 SVG에 덮는 대신 mermaid themeVariables로 준다(mermaid-정석).
+// 테마별 두 벌 — 렌더 직전에 initialize를 다시 불러 스위칭한다(전역 config라 idempotent).
+const MERMAID_VARS: Record<Theme, Record<string, string>> = {
+  dark: {
     background: "#16171a",
     primaryColor: "#282b31",
     primaryTextColor: "#f3f4f6",
     primaryBorderColor: "#4b515b",
     lineColor: "#8b909c",
-    fontFamily: "ui-monospace, monospace",
   },
-});
+  light: {
+    background: "#ffffff",
+    primaryColor: "#eceef2",
+    primaryTextColor: "#1b1e24",
+    primaryBorderColor: "#c4c8d2",
+    lineColor: "#868d99",
+  },
+};
 
 function label(n: string): string {
   return n === "__start__" ? "START" : n === "__end__" ? "END" : n;
@@ -33,6 +38,7 @@ function toMermaid(g: GraphView): string {
 
 export function Graph({ graph }: { graph: GraphView | { error: string } | null }) {
   const [svg, setSvg] = useState("");
+  const { theme } = useTheme();
   const rawId = useId();
   const id = `m${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
 
@@ -42,6 +48,13 @@ export function Graph({ graph }: { graph: GraphView | { error: string } | null }
       return;
     }
     let cancelled = false;
+    // 렌더 직전 테마에 맞춰 재-init — 다크↔라이트 토글 시 노드/글자/엣지 색이 따라온다.
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "base",
+      securityLevel: "loose",
+      themeVariables: { ...MERMAID_VARS[theme], fontFamily: "ui-monospace, monospace" },
+    });
     mermaid
       .render(id, toMermaid(graph))
       .then((r) => {
@@ -53,7 +66,7 @@ export function Graph({ graph }: { graph: GraphView | { error: string } | null }
     return () => {
       cancelled = true;
     };
-  }, [graph, id]);
+  }, [graph, id, theme]);
 
   if (graph && "error" in graph) {
     return <div className="font-mono text-danger text-xs">{graph.error}</div>;

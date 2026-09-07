@@ -21,6 +21,25 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* 라이트 테마. `document.documentElement[data-theme="light"]`일 때만 토큰을 덮는다
+   (다크가 기본이라 [data-theme="dark"]·미지정은 위 @theme 값 그대로). */
+:root[data-theme="light"] {
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #eceef2;
+  --color-border: #d6d9e0;
+  --color-fg: #1b1e24;
+  --color-muted: #565d68;
+  --color-faint: #868d99;
+  --color-accent: #5a5bd8;
+  --color-human: #2563eb;
+  --color-aimsg: #0f9d58;
+  --color-tool: #7c3aed;
+  --color-danger: #d64545;
+  --color-ready: #0f9d58;
+  --color-warn: #b5791a;
+}
+
 html,
 body,
 #root {
