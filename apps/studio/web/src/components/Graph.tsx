@@ -8,11 +8,11 @@ mermaid.initialize({
   theme: "base",
   securityLevel: "loose",
   themeVariables: {
-    background: "#0d0d0f",
-    primaryColor: "#1c1c20",
-    primaryTextColor: "#e9e9ec",
-    primaryBorderColor: "#2a2a30",
-    lineColor: "#5a5a63",
+    background: "#16171a",
+    primaryColor: "#282b31",
+    primaryTextColor: "#f3f4f6",
+    primaryBorderColor: "#4b515b",
+    lineColor: "#8b909c",
     fontFamily: "ui-monospace, monospace",
   },
 });

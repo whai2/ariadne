@@ -1,21 +1,22 @@
 @import "tailwindcss";
 
-/* Mastra 플레이그라운드풍 다크 팔레트. 근-흑 배경 + 옅은 경계 + 절제된 강조색. */
+/* 다크 팔레트. 배경을 살짝 들어올리고 경계·보조 텍스트 대비를 높여 가독성을 확보한다.
+   (초판이 너무 어두워 muted/faint 텍스트와 그래프 노드가 배경에 묻혔다.) */
 @theme {
-  --color-bg: #0d0d0f;
-  --color-surface: #151517;
-  --color-surface-2: #1c1c20;
-  --color-border: #2a2a30;
-  --color-fg: #e9e9ec;
-  --color-muted: #8a8a93;
-  --color-faint: #5a5a63;
-  --color-accent: #8b8bf6;
-  --color-human: #5aa2ff;
-  --color-aimsg: #4ec98f;
-  --color-tool: #b48bff;
-  --color-danger: #ff6b6b;
-  --color-ready: #4ec98f;
-  --color-warn: #d9a441;
+  --color-bg: #16171a;
+  --color-surface: #1e2024;
+  --color-surface-2: #282b31;
+  --color-border: #3b3f47;
+  --color-fg: #f3f4f6;
+  --color-muted: #b3b8c2;
+  --color-faint: #8b909c;
+  --color-accent: #a5a6ff;
+  --color-human: #6fb2ff;
+  --color-aimsg: #56d79a;
+  --color-tool: #c6a6ff;
+  --color-danger: #ff7b7b;
+  --color-ready: #56d79a;
+  --color-warn: #ecb64f;
 
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
