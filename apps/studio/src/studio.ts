@@ -1,4 +1,5 @@
 import type { BaseMessage, CompiledGraph, StepUpdate } from "@ariadne/core";
+import { agentInfo, agents, agentTurn, buildAgentGraph } from "./agents";
 import { buildChatGraph, chatTurn, providerList, SHAPES, type ShapeId } from "./chat";
 import type { Example } from "./examples";
 import { PAGE } from "./page";
@@ -20,6 +21,9 @@ export interface Studio {
  * - GET  /api/shapes     → 챗이 돌 수 있는 그래프 모양들
  * - GET  /api/chat/graph?shape → 그 모양의 구조(보내기 전에 그림을 볼 수 있게)
  * - POST /api/chat       → { spec, messages, system, shape } 한 턴 대화 (그래프로 돈다)
+ * - GET  /api/agents     → 등록된 에이전트 목록(설정 + 준비 상태)
+ * - GET  /api/agents/graph?id → 그 에이전트의 그래프 구조(자격증명 없이)
+ * - POST /api/agents/chat → { id, messages } 그 에이전트로 한 턴
  * - GET  /api/examples   → 예제 목록
  * - GET  /api/graph?id   → 그 예제의 구조(getGraph)
  * - POST /api/run        → { id, input }으로 stream을 돌려 스텝별 상태/채널 반환
@@ -27,6 +31,7 @@ export interface Studio {
 export function createStudio(examples: Example[]): Studio {
   const byId = new Map(examples.map((e) => [e.id, e]));
   const first = examples[0];
+  const agentById = new Map(agents.map((a) => [a.id, a]));
 
   /**
    * 그래프를 만든다. **여기서 처음 만들어진다** — live 예제는 자격증명이 없으면
@@ -95,6 +100,41 @@ export function createStudio(examples: Example[]): Studio {
               ...(body.shape === undefined ? {} : { shape: body.shape }),
             }),
           );
+        } catch (e) {
+          return Response.json({ error: describe(e) }, { status: 500 });
+        }
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/agents") {
+        return Response.json(agents.map((a) => agentInfo(a)));
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/agents/graph") {
+        const def = agentById.get(url.searchParams.get("id") ?? "");
+        if (def === undefined) {
+          return Response.json({ error: "에이전트가 없다" }, { status: 404 });
+        }
+        // preview=true — 자격증명 없이 구조만. 그래프 모양은 모델과 무관하다.
+        return Response.json(buildAgentGraph(def, true).getGraph());
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/agents/chat") {
+        let body: { id?: string; messages?: BaseMessage[] };
+        try {
+          body = (await req.json()) as typeof body;
+        } catch {
+          return Response.json({ error: "입력 JSON 파싱 실패" }, { status: 400 });
+        }
+        const def = agentById.get(body.id ?? "");
+        if (def === undefined) {
+          return Response.json({ error: "에이전트가 없다" }, { status: 404 });
+        }
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          return Response.json({ error: "messages가 필요하다" }, { status: 400 });
+        }
+        try {
+          // 모델 생성 실패(키 없음)와 호출 실패를 같은 자리에서 — 둘 다 사용자가 고칠 수 있다.
+          return Response.json(await agentTurn(def, body.messages));
         } catch (e) {
           return Response.json({ error: describe(e) }, { status: 500 });
         }

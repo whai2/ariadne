@@ -631,3 +631,74 @@ describe("한글 입력 (IME) 회귀 가드", () => {
     expect(html).toContain("229"); // isComposing 없는 브라우저 폴백
   });
 });
+
+describe("Agents (사이드바) — S9", () => {
+  async function json(path: string, init?: RequestInit) {
+    return (await (await studio.fetch(new Request(`http://x${path}`, init))).json()) as never;
+  }
+
+  it("GET /api/agents 는 등록된 에이전트를 설정과 함께 준다", async () => {
+    const list = (await json("/api/agents")) as Array<{
+      id: string;
+      tools: string[];
+      model: string;
+      toolsNative: boolean;
+    }>;
+    const calc = list.find((a) => a.id === "calculator");
+    const assistant = list.find((a) => a.id === "assistant");
+    expect(calc?.tools).toEqual(["add", "multiply", "now"]);
+    expect(assistant?.tools).toEqual([]); // 툴 없는 에이전트
+    // 기본 프로바이더가 claude-code라 네이티브 툴은 못 실어 프롬프트 흉내(F2.4).
+    expect(calc?.toolsNative).toBe(false);
+    expect(calc?.model).toBe("claude-code/sonnet");
+  });
+
+  it("GET /api/agents/graph 는 자격증명 없이 그래프를 준다 — 툴이 있으면 model⇄tools 루프", async () => {
+    // 툴 에이전트: model·tools 노드 + 조건부 엣지 + tools→model 정적 엣지.
+    const g = (await json("/api/agents/graph?id=calculator")) as {
+      nodes: string[];
+      edges: Array<{ from: string; to: string; kind: string }>;
+    };
+    expect(g.nodes).toEqual(["model", "tools"]);
+    expect(g.edges).toContainEqual({ from: "tools", to: "model", kind: "static" });
+    expect(
+      g.edges
+        .filter((e) => e.from === "model" && e.kind === "conditional")
+        .map((e) => e.to)
+        .sort(),
+    ).toEqual(["__end__", "tools"]);
+  });
+
+  it("툴 없는 에이전트는 단발 호출 그래프 — model→END, tools 노드 없음", async () => {
+    const g = (await json("/api/agents/graph?id=assistant")) as {
+      nodes: string[];
+      edges: Array<{ from: string; to: string; kind: string }>;
+    };
+    expect(g.nodes).toEqual(["model"]);
+    expect(g.edges).toContainEqual({ from: "model", to: "__end__", kind: "static" });
+  });
+
+  it("모르는 에이전트 id 는 404", async () => {
+    const res = await studio.fetch(new Request("http://x/api/agents/graph?id=nope"));
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /api/agents/chat 은 messages가 없으면 400", async () => {
+    const res = await studio.fetch(
+      new Request("http://x/api/agents/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "calculator", messages: [] }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("페이지에 사이드바 + 에이전트 뷰가 있다", async () => {
+    const html = await (await studio.fetch(new Request("http://x/"))).text();
+    expect(html).toContain('class="sidebar"');
+    expect(html).toContain('id="agentnav"'); // 에이전트 목록이 채워질 자리
+    expect(html).toContain('id="view-agent"'); // 상세 뷰
+    expect(html).toContain("createAgent"); // 상세에 무엇이 그래프를 세우는지 적혀 있다
+  });
+});

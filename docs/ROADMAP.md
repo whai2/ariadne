@@ -129,6 +129,11 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
 - [x] **S8 · 분업 모양(Send 팬아웃)** — `parallel`이 "같은 질문에 두 관점"이라 **분업이 아니라는** 지적을 받고 추가. `dispatch`가 요청을 하위 작업 N개로 쪼개고 **각 워커가 자기 몫만** 받는다(V6 Send, `addNode<string>`). 패널에 `Step 0: dispatch` → `Step 1: worker · worker`로 뜬다.
   - **claude-code 트랜스포트의 하네스 오염을 측정으로 걷어냈다.** ① 실행 디렉터리의 `CLAUDE.md`·스킬을 자동으로 읽어 저장소 맥락이 실렸다 → 기본 cwd를 임시 디렉터리로. ② `--disallowed-tools`는 실행만 막고 **툴 정의는 컨텍스트에 남긴다** → `--tools ""`로 교체. 프롬프트 토큰 **18,040 → 923**(기본 → `--tools "" --disable-slash-commands --system-prompt`). 지시 준수 **1/3 → 3/3**. `--bare`는 더 강하지만 구독 자격증명을 안 읽어(`Not logged in`) 못 쓴다.
   - 제어 노드(dispatch)는 사용자 System을 **안 물려받는다**. "두 문장 이내" 같은 답변 지시가 계획 형식과 충돌한다.
+- [x] **S9 · 에이전트 사이드바** — Mastra 플레이그라운드 대응. 레이아웃을 상단 탭 → **좌측 고정 사이드바**로 바꾸고, `agents: AgentDef[]`에 등록한 에이전트가 사이드바에 뜬다. 고르면 우측에 **설정 칩 + 그래프 + 대화 + 스텝**.
+  - **"에이전트 등록"은 배열 한 줄.** `AgentDef`가 `createAgent`(F3.1)의 설정 그대로라 등록 = 설정에 이름 붙이기다(Mastra `new Mastra({ agents })`와 같은 발상). 셋을 골라 `createAgent`의 얼굴을 보여준다 — 툴 여럿·툴 없음(단발 호출)·툴 하나.
+  - **core를 진화시키지 않았다.** 에이전트 그래프도 `getGraph()`·`stream()`으로 관찰되는 평범한 그래프라 S1~S2 관찰 표면이 그대로 통했다("agent=특수한 그래프"가 관찰 층에서 회수됨).
+  - `/api/agents/graph`는 **preview 모델**로 그려 자격증명 없이 구조가 뜬다. 기본 claude-code/sonnet이라 **API 키 없이** 진짜 에이전트가 돈다(툴이 있으면 promptedTools 자동, 사이드바가 "툴=프롬프트 흉내" 칩으로 알림). 렌더링(`msgHtml`)·IME 처리(`bindComposer`)를 자유 Chat과 공유해 기존 44 테스트 무수정.
+  - **실호출 검증(실제 CLI, 키 0):** timekeeper `now()` · calculator `add·multiply` 병렬 → 둘 다 model→tools→model 왕복 성공. ([노트 22](notes/22-s9-agent-sidebar.md))
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.
