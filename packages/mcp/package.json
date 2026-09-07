@@ -1,0 +1,26 @@
+{
+  "name": "@ariadne/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ariadne MCP 링 — 외부 MCP 서버의 툴을 우리 툴 링의 Tool로 끌어온다",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "example": "bun run examples/agent.ts"
+  },
+  "dependencies": {
+    "@ariadne/core": "workspace:*",
+    "@ariadne/tools": "workspace:*",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@ariadne/agent": "workspace:*",
+    "@ariadne/model": "workspace:*"
+  }
+}

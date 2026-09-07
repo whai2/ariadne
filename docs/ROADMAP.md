@@ -246,6 +246,8 @@ F1의 벽(`content`가 string이라 툴 호출을 못 담음)을 정면으로 �
 ### F3 · 에이전트 링 — `@ariadne/agent`
 model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸 보이는 단계 — 새 실행 개념 없이 StateGraph 조립으로 끝나야 한다. **루프는 우리 엔진 안에 남는다**(F2.4가 MCP 위임과 갈라 지킨 핵심). MCP/세션/승인 게이트로 claude-code를 확장하는 SDK 경로는 여기서 다룬다.
 
+> **MCP는 방향이 셋이다.** ① 남의 서버의 툴을 우리가 쓴다(client — **F3.2**) ② 우리 에이전트/툴을 남에게 노출한다(server — VISION 4번 "연동", 나중) ③ 모델에게 루프째 위임한다(**F2.4가 거부**). F3.2가 한 건 ①이고, 그래서 루프가 우리 안에 남는다.
+
 #### F3.1 · `createAgent` — ReAct 네 줄을 접는다 — [x] 완료
 - **도는 것:** `bun run --filter '@ariadne/agent' example` — `createAgent({ model, tools })`가 컴파일된 그래프를 돌려주고, 가짜 모델이 한 턴에 툴 둘을 부르면 `toolNode`가 병렬 실행해 되돌린다. **자격증명 0 · 네트워크 0.** 진짜 모델 경로는 스튜디오 챗의 `tools` 모양이 그대로 이어받았다.
 - **F3의 논지를 코드로:** F2.3/F2.4가 **네 곳에서 글자까지 똑같이** 쓰던 ReAct 조립(`addNode("tools")`+`addEdge(START,"model")`+`addConditionalEdges(…toolsCondition)`+`addEdge("tools","model")`)을 접었다. 반환이 **`CompiledGraph`**라 스튜디오의 `stream()`·`getGraph()`가 그대로 붙는다 — 에이전트가 특별한 실행기가 아니라 **특수한 그래프**임을 못박는다. `createAgent`는 그 네 줄 **이상을 하지 않는다**(새 채널·superstep·엔진 수정 0).
@@ -256,6 +258,20 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 - **안 한 것(정직):** MCP/세션/승인 게이트(claude-code SDK 확장 — F3 다음 커밋), 주입 상태·스토어, 스트리밍, 모델 스펙 문자열 오버로드(지금은 `ChatModel`만).
 - **검증:** 257 pass / 4 skip / 0 fail (core 81 · tools 28 · model 97 · **agent 7** · studio 44 — core·tools·model·studio 무수정). ([노트 21](notes/21-f3_1-agent-ring.md))
 - **벽 → 다음:** 에이전트가 아는 건 **한 번의 자율 루프**뿐이다. 세션(진짜 멀티턴)·승인 게이트·MCP는 `ChatModel.invoke`보다 큰 인터페이스를 요구한다 — F3의 남은 커밋.
+
+#### F3.2 · MCP 링 — `@ariadne/mcp`, 툴 정의의 두 번째 입구 — [x] 완료
+- **도는 것:** `bun run --filter '@ariadne/mcp' example` — **진짜 MCP 서버 프로세스**를 띄워 툴 목록을 받아오고, `createAgent`가 그걸 로컬 툴과 **같은 배열에** 담아 ReAct 루프를 돈다. **네트워크 0 · 자격증명 0.**
+- **`@ariadne/tools`가 한 줄도 안 바뀌었다.** 계획은 `Tool` 인터페이스가 깨진다고 봤는데 전제 둘 중 **하나만** 깨졌다. ① *파생 방향*은 진짜 뒤집힌다(zod→JSON Schema가 아니라 **서버의 JSON Schema→zod**) — 그런데 `Tool`이 `schema`·`spec`을 **처음부터 별개 필드**로 갖고 있어 방향을 강요하지 않았다. ② *실행 위치*(로컬 함수 → RPC)는 **안 깨졌다** — `execute`의 반환이 `unknown`이고 toolNode가 `await`하므로 비동기 원격 호출이 이미 계약 안에 있었다. 결과: `toolNode`·`toolsCondition`·`createAgent`·엔진 **전부 무수정**.
+- **성립 조건은 `z.fromJSONSchema`(zod 4.5).** 없었으면 검증을 포기하거나 JSON Schema 검증기를 따로 들여야 했다. **왕복은 안 시킨다** — 되돌린 zod에서 스키마를 다시 뽑으면 `{type:"integer",minimum:1}`이 `maximum: 9007199254740991`을 달고 나온다(실측). 모델에겐 **서버 원본**이 가야 한다.
+- **SDK를 안 쓴다.** 우리가 쓰는 표면이 `initialize`·`tools/list`·`tools/call` 셋뿐이라 감싼 패키지를 들이면 배우려는 프로토콜이 그 안에 숨는다(F1.7의 220MB SDK 판단과 같다). **MCP stdio는 LSP와 다르다** — `Content-Length:` 헤더가 아니라 **개행으로 나뉜 JSON 한 줄**이라, `splitFrames`가 순수 함수로 떨어진다.
+- **`isError`는 던지지 않는다.** F2.2 정책("툴 본문이 던지면 전파")과 갈리는데 갈리는 게 맞다 — MCP는 이 필드를 *모델에게 보여주라고* 만들었다. `status:"error"`를 실으려면 결과 메시지를 직접 지어야 해서 `Command`로 돌려주고, 그게 F2.2의 `ToolContext.toolCallId`가 처음 쓰이는 자리다. 던지는 건 **연결·프로토콜 실패**뿐.
+- **가변 상태는 에이전트가 아니라 연결에 있었다.** 노트 21은 "MCP가 붙으면 `createAgent`를 클래스로 승격"이라 예고했는데, 얹을 게 **에이전트에 안 생겼다** — 프로세스·버퍼·요청 표·수명이 전부 `McpClient` 안이다. 그래서 **`McpClient`가 이 저장소의 첫 클래스**이고 `createAgent`는 계속 함수다.
+- **F2.4가 거부한 MCP와 방향이 반대다.** 그때 거부한 건 `claude --mcp-config`(루프를 남의 프로세스로 넘김). 여기선 **우리가 클라이언트**라 호출 결정은 모델이·실행은 `toolNode`가·라우팅은 우리 엔진이 한다 — 루프는 우리 안(F2.4가 지킨 핵심).
+- **경계:** `@ariadne/mcp`는 tools에 의존하고 tools는 mcp를 모른다. 패키지 안도 갈랐다 — `protocol.ts`·`client.ts`(툴 링을 모름) / `tools.ts`(여기만 두 링을 앎).
+- **테스트가 진짜 서버를 띄운다.** 가짜 클라이언트로 테스트하면 우리가 상상한 서버만 통과한다 → `test/fixtures/demo-server.ts`에 스펙대로 된 stdio 서버를 짰고, `crash-server.ts`로 **가장 흔한 실패(서버가 안 뜸)**를 재현해 조용한 hang 대신 stderr 실은 에러가 나오는지 본다.
+- **안 한 것(정직):** 요청 타임아웃(프로세스 사망은 깨우지만 *침묵*은 매단다) · `tools/list_changed` 구독 · HTTP/SSE·OAuth(SDK가 값 하는 자리) · 리소스/프롬프트/샘플링(`initialize`에 능력을 **하나도 선언 안 한다**) · 이름 충돌 정책 · 멀티모달(`[image …]` 표식으로 접힘) · 스튜디오 연동.
+- **검증:** 293 pass / 4 skip / 0 fail (core 81 · tools 28 · **mcp 37** · model 97 · agent 7 · studio 43 — **mcp 뺀 다섯 무수정**). ([노트 24](notes/24-f3_2-mcp.md))
+- **벽 → 다음:** 원격 툴이 도는데 **어느 툴이 원격인지 아무도 안 알려주고**, 사람이 **툴 실행을 막을 자리가 없다**(남의 프로세스가 파일을 지우는 툴을 줄 수 있는데도). 그게 F3의 남은 둘 — 승인 게이트 · 세션.
 
 ### F4 · 메모리 링 — `@ariadne/memory` (예정)
 대화 히스토리 + RAG. 영속성(checkpointer)은 core의 범위 밖이었으므로 여기서 처음 부딪힌다.

@@ -11,6 +11,7 @@
    - `@ariadne/model` — 모델 라우팅(통합 LLM 인터페이스; Claude 우선).
    - `@ariadne/tools` — 툴 정의/실행.
    - `@ariadne/agent` — LLM+tool 자율 루프 (agent = core 위의 특수한 그래프).
+   - `@ariadne/mcp` — 외부 MCP 서버의 툴을 `Tool`로 끌어온다(툴 정의의 두 번째 입구). 반대 방향(우리를 서버로 노출)은 4번 "연동".
    - `@ariadne/memory` — 대화 히스토리 + RAG + 영속성(checkpointer).
    - Human-in-the-loop — core의 인터럽트로 suspend/resume.
 3. **운영** — `@ariadne/evals`, `@ariadne/observability`(트레이싱).
@@ -27,6 +28,7 @@ ariadne/
 │   ├── model/   @ariadne/model
 │   ├── tools/   @ariadne/tools
 │   ├── agent/   @ariadne/agent
+│   ├── mcp/     @ariadne/mcp
 │   └── memory/  @ariadne/memory
 ├── apps/
 │   └── studio/  @ariadne/studio

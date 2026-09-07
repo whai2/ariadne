@@ -45,6 +45,19 @@
       "name": "@ariadne/core",
       "version": "0.0.0",
     },
+    "packages/mcp": {
+      "name": "@ariadne/mcp",
+      "version": "0.0.0",
+      "dependencies": {
+        "@ariadne/core": "workspace:*",
+        "@ariadne/tools": "workspace:*",
+        "zod": "^4.5.4",
+      },
+      "devDependencies": {
+        "@ariadne/agent": "workspace:*",
+        "@ariadne/model": "workspace:*",
+      },
+    },
     "packages/model": {
       "name": "@ariadne/model",
       "version": "0.0.0",
@@ -71,6 +84,8 @@
     "@ariadne/agent": ["@ariadne/agent@workspace:packages/agent"],
 
     "@ariadne/core": ["@ariadne/core@workspace:packages/core"],
+
+    "@ariadne/mcp": ["@ariadne/mcp@workspace:packages/mcp"],
 
     "@ariadne/model": ["@ariadne/model@workspace:packages/model"],
 
