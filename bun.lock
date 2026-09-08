@@ -17,6 +17,7 @@
       "dependencies": {
         "@ariadne/agent": "workspace:*",
         "@ariadne/core": "workspace:*",
+        "@ariadne/mcp": "workspace:*",
         "@ariadne/model": "workspace:*",
         "@ariadne/tools": "workspace:*",
         "mermaid": "^11.6.0",

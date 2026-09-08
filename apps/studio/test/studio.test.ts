@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { connectMcpAgents } from "../src/agents";
 import { examples } from "../src/examples";
 import { createStudio } from "../src/studio";
 
@@ -631,4 +632,73 @@ describe("Agents (사이드바) — S9", () => {
 
   // (사이드바·에이전트 상세는 web/src의 React 컴포넌트다 — DOM 문자열 검사 대신
   //  서버 계약(/api/agents, /api/agents/graph, /api/agents/chat)을 위에서 검사한다.)
+});
+
+// MCP 에이전트는 **진짜 서버를 띄운다**(자식 프로세스 + JSON-RPC). 네트워크 0.
+// connectMcpAgents가 툴을 채운 뒤로는 로컬 툴 에이전트와 계약이 똑같아야 한다 — 그게 요점이다.
+describe("MCP 에이전트 — 툴이 외부 서버에서 온다 (F3.2)", () => {
+  let closeMcp: () => Promise<void>;
+
+  beforeAll(async () => {
+    closeMcp = await connectMcpAgents();
+  });
+  afterAll(async () => {
+    await closeMcp();
+  });
+
+  async function json(path: string) {
+    return (await (await studio.fetch(new Request(`http://x${path}`))).json()) as never;
+  }
+
+  it("툴이 채워지고 **서버 이름**이 실린다 — 우리가 한 줄도 안 적은 툴들", async () => {
+    const list = (await json("/api/agents")) as Array<{
+      id: string;
+      tools: string[];
+      mcpServer?: string;
+    }>;
+    const mcp = list.find((a) => a.id === "mcp");
+    // 데모 서버가 준 두 툴이 그대로 실린다.
+    expect(mcp?.tools.sort()).toEqual(["get_weather", "word_count"]);
+    // serverInfo로 붙은 서버의 정체가 드러난다.
+    expect(mcp?.mcpServer).toBe("ariadne-studio-demo");
+  });
+
+  it("그래프가 **로컬 툴 에이전트와 똑같다** — model ⇄ tools 루프", async () => {
+    const g = (await json("/api/agents/graph?id=mcp")) as {
+      nodes: string[];
+      edges: Array<{ from: string; to: string; kind: string }>;
+    };
+    // 계산기 에이전트와 글자까지 같은 모양 — 툴이 원격인 걸 그래프는 모른다.
+    expect(g.nodes).toEqual(["model", "tools"]);
+    expect(g.edges).toContainEqual({ from: "tools", to: "model", kind: "static" });
+    expect(
+      g.edges
+        .filter((e) => e.from === "model" && e.kind === "conditional")
+        .map((e) => e.to)
+        .sort(),
+    ).toEqual(["__end__", "tools"]);
+  });
+
+  // **진짜 기성 서버**(@modelcontextprotocol/server-filesystem, npx)에 붙는 에이전트.
+  // npx 다운로드·네트워크가 필요해 오프라인이면 못 붙는데, 그때도 스튜디오는 떠야 한다 —
+  // 그래서 "붙었으면 진짜 서버 티가 나고, 못 붙었으면 이유가 실린다" 둘 중 하나를 검증한다.
+  it("붙으면 진짜 서버가, 못 붙으면 이유가 실린다 — 한 서버가 죽어도 스튜디오는 산다", async () => {
+    const list = (await json("/api/agents")) as Array<{
+      id: string;
+      tools: string[];
+      mcpServer?: string;
+      mcpError?: string;
+    }>;
+    const fs = list.find((a) => a.id === "filesystem");
+    expect(fs).toBeDefined();
+    if (fs?.mcpError === undefined) {
+      // 붙었다 — 그 서버가 준 진짜 파일 툴이 실렸는지.
+      expect(fs?.mcpServer).toBe("secure-filesystem-server");
+      expect(fs?.tools).toContain("list_directory");
+      expect(fs?.tools).toContain("read_text_file");
+    } else {
+      // 못 붙었다(오프라인 등) — 데모 에이전트는 여전히 멀쩡해야 한다(격리 검증).
+      expect(list.find((a) => a.id === "mcp")?.tools.length).toBeGreaterThan(0);
+    }
+  });
 });

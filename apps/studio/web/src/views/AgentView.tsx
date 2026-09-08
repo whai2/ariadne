@@ -61,10 +61,11 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
         <p className="mt-1 max-w-3xl text-muted leading-relaxed">{agent.description}</p>
         <div className="mt-3 flex flex-wrap gap-1.5">
           <Chip kind="model">{agent.model}</Chip>
+          {agent.mcpServer ? <Chip kind="warn">🛰 MCP: {agent.mcpServer}</Chip> : null}
           {agent.tools.length ? (
             agent.tools.map((t) => (
               <Chip key={t} kind="tool">
-                🔧 {t}
+                {agent.mcpServer ? "🛰" : "🔧"} {t}
               </Chip>
             ))
           ) : (
@@ -85,6 +86,13 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
         <p className={`mt-2 text-xs ${agent.ready ? "text-ready" : "text-warn"}`}>
           {agent.ready ? "✓ 바로 사용 가능" : `⚠ 필요: ${agent.need}`}
         </p>
+        {agent.mcpError ? (
+          <div className="mt-2 whitespace-pre-wrap rounded-md border border-danger/40 bg-danger/10 p-2.5 font-mono text-danger text-xs">
+            MCP 서버에 못 붙었다 — 이 에이전트는 툴 없이 떴다.
+            {"\n"}
+            {agent.mcpError}
+          </div>
+        ) : null}
       </header>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">

@@ -38,6 +38,10 @@ export interface AgentInfo {
   system?: string;
   maxToolRounds?: number;
   toolsNative: boolean;
+  /** 툴이 온 MCP 서버 이름(있으면). 툴이 외부 서버에서 왔음을 표시한다. */
+  mcpServer?: string;
+  /** MCP 서버 연결이 실패했다면 그 이유(있으면). */
+  mcpError?: string;
   ready: boolean;
   need: string;
 }
