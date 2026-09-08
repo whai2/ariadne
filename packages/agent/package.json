@@ -12,11 +12,15 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "example": "bun run examples/react.ts"
+    "example": "bun run examples/react.ts",
+    "example:approval": "bun run examples/approval.ts"
   },
   "dependencies": {
     "@ariadne/core": "workspace:*",
     "@ariadne/model": "workspace:*",
     "@ariadne/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "zod": "^4.5.4"
   }
 }

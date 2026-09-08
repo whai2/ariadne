@@ -10,4 +10,9 @@
 
 export type { AgentConfig } from "./agent";
 export { createAgent } from "./agent";
-export { ModelCannotUseToolsError } from "./errors";
+// 승인 게이트 (F3.3). `pendingToolCalls`가 호출자용 표면이다 — run이 끝난 이력에 대고 부르면
+// "사람에게 물어볼 게 남았나"를 알려준다. 재개는 같은 이력으로 그냥 다시 도는 것이라
+// 새 실행 API가 없다(core에 인터럽트를 안 넣었다는 뜻이기도 하다).
+export type { Approval, ApprovalPolicy } from "./approval";
+export { askAlways, askFor, pendingToolCalls } from "./approval";
+export { ApprovalWithoutToolsError, ModelCannotUseToolsError } from "./errors";

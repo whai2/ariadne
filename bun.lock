@@ -41,6 +41,9 @@
         "@ariadne/model": "workspace:*",
         "@ariadne/tools": "workspace:*",
       },
+      "devDependencies": {
+        "zod": "^4.5.4",
+      },
     },
     "packages/core": {
       "name": "@ariadne/core",

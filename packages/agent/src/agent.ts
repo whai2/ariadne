@@ -28,7 +28,8 @@ import {
 } from "@ariadne/core";
 import type { ChatModel, ToolSpec } from "@ariadne/model";
 import { type AnyTool, toolNode, toolSpecs, toolsCondition } from "@ariadne/tools";
-import { ModelCannotUseToolsError } from "./errors";
+import { type ApprovalPolicy, approvalEntry, approvalExit, gatedToolNode } from "./approval";
+import { ApprovalWithoutToolsError, ModelCannotUseToolsError } from "./errors";
 
 /** 한 run 안에서 모델에게 툴을 쥐여줄 최대 라운드 수의 기본값. */
 const DEFAULT_MAX_TOOL_ROUNDS = 10;
@@ -51,6 +52,16 @@ export interface AgentConfig<S extends MessagesState = MessagesState> {
    * 추가 채널을 쓰는 그래프(예: 스튜디오 챗의 `turns`/`tasks`)에 얹을 때만 준다.
    */
   schema?: StateSchema<S>;
+  /**
+   * 승인 게이트 (F3.3). 주면 툴이 돌기 **직전에** 이 정책에 물어본다.
+   *
+   * `"ask"`를 돌려주면 run이 **답 없는 `tool_use`를 남기고 끝난다** — 그게 이 저장소의 "멈춤"
+   * 표현이다(core엔 인터럽트가 없다). 재개는 같은 이력으로 새 run을 도는 것이고, 그때
+   * 진입이 `model`이 아니라 `tools`로 갈린다. 자세한 건 `approval.ts`.
+   *
+   * 툴이 없으면 걸 데가 없으므로 **구성 시점에 던진다**(`ApprovalWithoutToolsError`).
+   */
+  approval?: ApprovalPolicy;
 }
 
 /**
@@ -104,7 +115,7 @@ function toolRoundsSinceLastHuman(messages: readonly BaseMessage[]): number {
 export function createAgent<S extends MessagesState = MessagesState>(
   config: AgentConfig<S>,
 ): CompiledGraph<S> {
-  const { model, system } = config;
+  const { model, system, approval } = config;
   const tools = config.tools ?? [];
   const maxToolRounds = config.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
   const schema = config.schema ?? (messagesSchema as StateSchema<S>);
@@ -112,6 +123,10 @@ export function createAgent<S extends MessagesState = MessagesState>(
   // 툴을 줬는데 못 싣는 모델이면 **지금 던진다** — 그래프가 조용히 툴 노드에 안 가는 걸 막는다.
   if (tools.length > 0 && !model.supportsTools) {
     throw new ModelCannotUseToolsError(model.provider);
+  }
+  // 승인 정책만 있고 툴이 없으면 게이트는 **영영 안 불린다**. 같은 이유로 여기서 세운다.
+  if (approval !== undefined && tools.length === 0) {
+    throw new ApprovalWithoutToolsError();
   }
 
   // 두 링이 만나는 유일한 자리: tools 링의 산출물을 model 링의 `invoke({tools})`에 넘긴다.
@@ -131,16 +146,29 @@ export function createAgent<S extends MessagesState = MessagesState>(
     return { messages: [reply] } as Partial<S>;
   });
 
-  g.addEdge(START, "model");
-
   if (specs === undefined) {
     // 툴이 없으면 에이전트는 단발 호출이다. tools 노드도 조건부 엣지도 지어봐야 죽은 가지다.
+    g.addEdge(START, "model");
     g.addEdge("model", END);
-  } else {
+  } else if (approval === undefined) {
     // 노드 이름이 "tools"인 건 toolsCondition이 그 문자열을 돌려주기 때문이다(langgraph도 같다).
+    g.addEdge(START, "model");
     g.addNode("tools", toolNode<S>(tools));
     g.addConditionalEdges("model", toolsCondition, ["tools", END]);
     g.addEdge("tools", "model"); // 툴 결과를 들고 다시 model로 (루프)
+  } else {
+    // 승인 게이트가 붙은 모양 (F3.3). **노드는 그대로 둘이다** — 바뀐 건 두 엣지의 방향성뿐이고,
+    // 그 둘을 **같은 술어**(`pendingToolCalls`)가 정한다:
+    //
+    //   START → tools  (대기 있음 = 재개)      tools → END  (대기 남음 = 멈춤)
+    //   START → model  (대기 없음 = 새 요청)   tools → model (답 다 붙음 = 평소 루프)
+    //
+    // `tools → model`이 정적 엣지에서 조건부로 바뀐 게 요점이다. 정적 엣지는 **취소가 안 된다**
+    // (제어흐름이 채널 쓰기라 쓰기는 합집합이다) — 멈추려면 애초에 안 써야 한다.
+    g.addNode("tools", gatedToolNode<S>(tools, approval));
+    g.addConditionalEdges(START, approvalEntry, ["tools", "model"]);
+    g.addConditionalEdges("model", toolsCondition, ["tools", END]);
+    g.addConditionalEdges("tools", approvalExit, ["model", END]);
   }
 
   return g.compile();
