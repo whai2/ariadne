@@ -42,8 +42,17 @@ export interface AgentInfo {
   mcpServer?: string;
   /** MCP 서버 연결이 실패했다면 그 이유(있으면). */
   mcpError?: string;
+  /** 사람의 승인이 있어야 도는 툴 이름들 (F3.3). 툴 칩에 자물쇠를 단다. */
+  approval?: string[];
   ready: boolean;
   need: string;
+}
+
+/** 모델이 요청한 툴 호출 하나. 승인 패널이 이걸 그대로 보여준다. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
 }
 
 export interface ProviderInfo {
@@ -74,6 +83,11 @@ export interface ExampleInfo {
 export interface Reply {
   messages: Message[];
   steps: StepUpdate[];
+  /**
+   * 승인을 기다리며 멈춘 툴 호출들 (F3.3). **멈추면 새 메시지가 안 늘어나므로**, 이 필드가
+   * 없으면 클라이언트는 "멈춤"과 "빈 응답"을 구별할 수 없다. (자유 챗 응답엔 없다.)
+   */
+  pending?: ToolCall[];
   error?: string;
 }
 
@@ -93,8 +107,9 @@ export const api = {
   agents: () => getJSON<AgentInfo[]>("/api/agents"),
   agentGraph: (id: string) =>
     getJSON<GraphView | { error: string }>(`/api/agents/graph?id=${encodeURIComponent(id)}`),
-  agentChat: (id: string, messages: Message[]) =>
-    postJSON<Reply>("/api/agents/chat", { id, messages }),
+  /** `decision`은 승인 대기에서 재개할 때만. 재개도 **같은 엔드포인트**다 (F3.3). */
+  agentChat: (id: string, messages: Message[], decision?: "allow" | "deny") =>
+    postJSON<Reply>("/api/agents/chat", { id, messages, decision }),
 
   providers: () => getJSON<ProviderInfo[]>("/api/providers"),
   shapes: () => getJSON<ShapeInfo[]>("/api/shapes"),

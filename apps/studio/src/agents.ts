@@ -4,8 +4,20 @@
 // 결국 model+tools+system 한 벌을 이름 붙여 두는 것뿐이고, 스튜디오는 고를 때마다
 // `createAgent`로 **그래프를 세워** 대화·관찰한다(F3.1이 준 표면).
 
-import { createAgent } from "@ariadne/agent";
-import type { BaseMessage, CompiledGraph, MessagesState, StepUpdate } from "@ariadne/core";
+import {
+  type Approval,
+  type ApprovalPolicy,
+  askFor,
+  createAgent,
+  pendingToolCalls,
+} from "@ariadne/agent";
+import type {
+  BaseMessage,
+  CompiledGraph,
+  MessagesState,
+  StepUpdate,
+  ToolCall,
+} from "@ariadne/core";
 import { connectStdio, type McpClient, mcpTools, type StdioServerConfig } from "@ariadne/mcp";
 import { type ChatModel, model } from "@ariadne/model";
 import { type AnyTool, add, multiply, now } from "@ariadne/tools";
@@ -34,6 +46,16 @@ export interface AgentDef {
   mcpServerName?: string;
   /** `connectMcpAgents`가 채운다 — 붙기 실패했다면 그 이유(네트워크·npx 없음 등). */
   mcpError?: string;
+  /**
+   * 사람의 승인이 있어야 도는 툴 이름들 (F3.3). 여기 이름이 하나라도 낀 묶음은 **실행 전에
+   * 멈추고** 사용자에게 물어본다.
+   *
+   * **문자열 배열인 게 판단이다.** 링의 `ApprovalPolicy`는 함수인데, 등록 목록은 사이드바로
+   * 직렬화돼 나가야 하므로(`AgentInfo`) 여기선 **선언**만 둔다. 함수로 바꾸는 건
+   * `buildAgentGraph` 한 곳뿐이다 — `mcp` 필드가 선언이고 `connectMcpAgents`가 연결로 바꾸는
+   * 것과 같은 모양(S11).
+   */
+  approval?: string[];
 }
 
 /**
@@ -78,22 +100,28 @@ export const agents: AgentDef[] = [
     model: "claude-code/sonnet",
     tools: [], // connectMcpAgents가 시작 시 채운다.
     mcp: { command: process.execPath, args: [`${import.meta.dir}/mcp-demo-server.ts`] },
-    system: "너는 비서다. 날씨나 단어 수가 필요하면 툴을 쓰고, 답은 간결하게 한국어로.",
+    system: "너는 비서다. 날씨·단어 수·메모 저장이 필요하면 툴을 쓰고, 답은 간결하게 한국어로.",
     maxToolRounds: 3,
+    // 읽기(get_weather·word_count)는 조용히 돌고 **쓰기만 사람을 부른다.** "메모 저장해줘"라고
+    // 하면 툴 직전에 멈추는 걸 오프라인에서 볼 수 있다.
+    approval: ["write_note"],
   },
   {
     id: "filesystem",
     name: "파일시스템 에이전트 (진짜 기성 MCP)",
     description:
-      "우리 데모가 아니라 **남이 만든 진짜 서버** `@modelcontextprotocol/server-filesystem`(공식 레퍼런스)에 npx로 붙는다. 여기 뜨는 read_text_file·list_directory·edit_file 등은 전부 그 서버가 준 것이고, 우리 클라이언트가 진짜 세상의 MCP 생태계에 그대로 붙는다는 증거다. 안전을 위해 `apps/studio/mcp-sample/` 폴더만 열어준다(그 서버는 파일을 바꾸는 툴도 주는데 아직 승인 게이트가 없다 — ROADMAP의 다음 단계). **첫 실행은 npx가 서버를 내려받아 몇 초 걸리고 네트워크가 필요하다.**",
+      "우리 데모가 아니라 **남이 만든 진짜 서버** `@modelcontextprotocol/server-filesystem`(공식 레퍼런스)에 npx로 붙는다. 여기 뜨는 read_text_file·list_directory·edit_file 등은 전부 그 서버가 준 것이고, 우리 클라이언트가 진짜 세상의 MCP 생태계에 그대로 붙는다는 증거다. **파일을 바꾸는 툴은 승인 게이트가 잡는다**(F3.3) — 모델이 write_file·edit_file을 부르면 실행 직전에 멈추고 여기 승인 버튼이 뜬다. 승인 전에는 디스크에 아무 일도 안 일어난다. 범위는 여전히 `apps/studio/mcp-sample/` 폴더로 좁혀둔다(게이트가 생겼어도 이중 방어는 남긴다). **첫 실행은 npx가 서버를 내려받아 몇 초 걸리고 네트워크가 필요하다.**",
     model: "claude-code/sonnet",
     tools: [], // connectMcpAgents가 시작 시 채운다(서버가 14개쯤 준다).
     mcp: {
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-filesystem", `${import.meta.dir}/../mcp-sample`],
     },
-    system: "너는 파일 비서다. 파일을 읽거나 목록이 필요하면 툴을 쓰고, 답은 간결하게 한국어로.",
+    system: "너는 파일 비서다. 파일을 읽거나 쓰려면 툴을 쓰고, 답은 간결하게 한국어로.",
     maxToolRounds: 4,
+    // 이 서버가 주는 **쓰기 계열 전부**. 목록을 손으로 적는 게 정직하다 — 서버가 어느 툴이
+    // 위험한지 안 알려주므로(MCP에 그런 필드가 없다) 판단은 우리 몫이다.
+    approval: ["write_file", "edit_file", "create_directory", "move_file"],
   },
 ];
 
@@ -144,6 +172,8 @@ export interface AgentInfo {
   mcpServer?: string;
   /** MCP 서버 연결이 실패했다면 그 이유(있으면). UI가 경고로 보여준다. */
   mcpError?: string;
+  /** 승인이 필요한 툴 이름들. UI가 그 툴 칩에 자물쇠를 단다. */
+  approval?: string[];
   /** 지금 이 환경에서 모델을 바로 부를 수 있나. */
   ready: boolean;
   /** 준비가 안 됐다면 무엇이 필요한지. */
@@ -168,6 +198,10 @@ export function agentInfo(
     toolsNative: status?.tools ?? true,
     ...(def.mcpServerName === undefined ? {} : { mcpServer: def.mcpServerName }),
     ...(def.mcpError === undefined ? {} : { mcpError: def.mcpError }),
+    // 실제로 붙은 툴 중에서만 추린다 — MCP 서버가 안 떠서 툴이 비면 "승인 필요"도 거짓말이 된다.
+    ...(def.approval === undefined
+      ? {}
+      : { approval: def.approval.filter((n) => def.tools.some((t) => t.name === n)) }),
     ready: status?.ready ?? false,
     need: status?.need ?? "알 수 없는 프로바이더",
   };
@@ -184,37 +218,82 @@ const previewModel: ChatModel = {
 };
 
 /**
+ * 선언(`def.approval`)을 링이 받는 정책 함수로 바꾼다 (F3.3).
+ *
+ * **`decision`은 대기 중이던 그 묶음에만 쓰고 버린다.** 재개하면 START가 `tools`로 들어가므로
+ * 게이트의 **첫 호출이 곧 사람이 답한 그 묶음**이다. 계속 물려두면 같은 run 안에서 모델이 또
+ * 위험한 툴을 불러도 안 물어보게 된다 — 한 번의 승인이 그 뒤를 전부 열어주는 건 게이트가 아니다.
+ *
+ * 클로저 상태가 요청 사이에 새지 않는 건 `agentTurn`이 **매 턴 그래프를 새로 세우기** 때문이다.
+ */
+function approvalPolicy(names: string[], decision?: Approval): ApprovalPolicy {
+  const gate = askFor(names);
+  let once = decision;
+  return (calls) => {
+    if (once === undefined) return gate(calls);
+    const answer = once;
+    once = undefined;
+    return answer;
+  };
+}
+
+/**
  * 에이전트를 그래프로 세운다. `preview`면 자리표시자 모델로(자격증명 없이 구조만),
  * 아니면 진짜 모델로. **툴이 있으면 promptedTools를 켠다** — 네이티브 어댑터는 무시하고
  * claude-code만 프롬프트로 흉내 낸다(그래서 claude-code 에이전트도 툴을 쓴다, F2.4).
+ *
+ * `decision`은 승인/거부로 **재개**할 때만 준다.
  */
-export function buildAgentGraph(def: AgentDef, preview = false): CompiledGraph<MessagesState> {
+export function buildAgentGraph(
+  def: AgentDef,
+  preview = false,
+  decision?: Approval,
+): CompiledGraph<MessagesState> {
   const chatModel = preview
     ? previewModel
     : model(def.model, { promptedTools: def.tools.length > 0 });
+  // 승인 선언은 있는데 툴이 안 붙었으면(MCP 서버가 안 뜬 경우) 게이트를 안 건다 —
+  // 링이 `ApprovalWithoutToolsError`로 던지기 때문이고, 그게 맞다(감쌀 게 없다).
+  const gated = def.tools.length > 0 && (def.approval?.length ?? 0) > 0;
   return createAgent({
     model: chatModel,
     tools: def.tools,
     ...(def.system === undefined ? {} : { system: def.system }),
     ...(def.maxToolRounds === undefined ? {} : { maxToolRounds: def.maxToolRounds }),
+    ...(gated ? { approval: approvalPolicy(def.approval ?? [], decision) } : {}),
   });
 }
 
 export interface AgentReply {
   messages: BaseMessage[];
   steps: StepUpdate<MessagesState>[];
+  /**
+   * 승인을 기다리며 멈춘 툴 호출들 (F3.3). 비어 있지 않으면 UI가 승인/거부 버튼을 띄운다.
+   *
+   * **이게 "멈춤"의 유일한 신호다.** 멈추면 새 메시지가 하나도 안 늘어나므로, 이 필드가 없으면
+   * 클라이언트는 빈 응답과 구별할 수 없다.
+   */
+  pending: ToolCall[];
 }
 
 /**
  * 이 에이전트로 한 턴. 챗과 같은 규약 — 이력 전체를 받고 **새로 생긴 메시지만** 돌려준다
  * (클라이언트가 이어붙인다). 스텝을 같이 실어 오른쪽에 엔진이 한 일을 그린다.
+ *
+ * **재개도 같은 함수다.** `decision`을 주면 이력 끝에 걸린 대기 묶음을 승인/거부하고 이어 돈다 —
+ * 새 엔드포인트도, 세션 id도, 서버 쪽 상태도 없다. 그럴 수 있는 건 이 에이전트의 상태가
+ * 전부 `messages`이고 그걸 **클라이언트가 쥐고 있어서**다(F3.3 노트).
  */
-export async function agentTurn(def: AgentDef, history: BaseMessage[]): Promise<AgentReply> {
-  const graph = buildAgentGraph(def);
+export async function agentTurn(
+  def: AgentDef,
+  history: BaseMessage[],
+  decision?: Approval,
+): Promise<AgentReply> {
+  const graph = buildAgentGraph(def, false, decision);
   const steps: StepUpdate<MessagesState>[] = [];
   for await (const step of graph.stream({ messages: history })) {
     steps.push(step);
   }
   const final = steps.at(-1)?.state.messages ?? history;
-  return { messages: final.slice(history.length), steps };
+  return { messages: final.slice(history.length), steps, pending: pendingToolCalls(final) };
 }

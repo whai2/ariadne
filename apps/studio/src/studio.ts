@@ -60,7 +60,10 @@ export interface Studio {
  * - POST /api/chat       → { spec, messages, system, shape } 한 턴 대화 (그래프로 돈다)
  * - GET  /api/agents     → 등록된 에이전트 목록(설정 + 준비 상태)
  * - GET  /api/agents/graph?id → 그 에이전트의 그래프 구조(자격증명 없이)
- * - POST /api/agents/chat → { id, messages } 그 에이전트로 한 턴
+ * - POST /api/agents/chat → { id, messages, decision? } 그 에이전트로 한 턴.
+ *                           `decision`("allow"|"deny")은 승인 대기에서 **재개**할 때만 (F3.3).
+ *                           재개에 새 엔드포인트가 없는 게 요점이다 — 상태가 messages뿐이라
+ *                           같은 요청에 결정 한 글자만 더 실으면 된다.
  * - GET  /api/examples   → 예제 목록
  * - GET  /api/graph?id   → 그 예제의 구조(getGraph)
  * - POST /api/run        → { id, input }으로 stream을 돌려 스텝별 상태/채널 반환
@@ -145,7 +148,7 @@ export function createStudio(examples: Example[]): Studio {
       }
 
       if (req.method === "POST" && url.pathname === "/api/agents/chat") {
-        let body: { id?: string; messages?: BaseMessage[] };
+        let body: { id?: string; messages?: BaseMessage[]; decision?: string };
         try {
           body = (await req.json()) as typeof body;
         } catch {
@@ -158,9 +161,14 @@ export function createStudio(examples: Example[]): Studio {
         if (!Array.isArray(body.messages) || body.messages.length === 0) {
           return Response.json({ error: "messages가 필요하다" }, { status: 400 });
         }
+        // 재개(F3.3). **"ask"는 클라이언트가 보낼 수 없다** — 그건 사람에게 묻겠다는 뜻인데,
+        // 요청을 보낸 쪽이 이미 사람이라 여기서 그 값이 오면 무한 왕복이 된다.
+        if (body.decision !== undefined && body.decision !== "allow" && body.decision !== "deny") {
+          return Response.json({ error: "decision은 allow 또는 deny다" }, { status: 400 });
+        }
         try {
           // 모델 생성 실패(키 없음)와 호출 실패를 같은 자리에서 — 둘 다 사용자가 고칠 수 있다.
-          return Response.json(await agentTurn(def, body.messages));
+          return Response.json(await agentTurn(def, body.messages, body.decision));
         } catch (e) {
           return Response.json({ error: describe(e) }, { status: 500 });
         }

@@ -41,7 +41,27 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  // **부수효과가 있는 툴** — 승인 게이트(F3.3)를 오프라인에서 보여주려고 있다. 앞의 둘과 달리
+  // 이건 서버의 상태를 바꾸므로 스튜디오가 `approval`에 이름을 올려 사람에게 묻는다.
+  // (진짜 디스크를 건드리는 건 기성 filesystem 서버 쪽이 맡는다. 여기선 메모리면 충분하다 —
+  //  보여주려는 게 "무엇이 파괴되나"가 아니라 "승인 전에는 안 돈다"라서.)
+  {
+    name: "write_note",
+    description: "메모를 저장한다. 같은 제목이면 덮어쓴다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "메모 제목" },
+        body: { type: "string", description: "메모 내용" },
+      },
+      required: ["title", "body"],
+      additionalProperties: false,
+    },
+  },
 ];
+
+/** `write_note`가 쌓이는 곳. 프로세스가 살아있는 동안만 — 데모라 이거면 충분하다. */
+const notes = new Map<string, string>();
 
 function send(message: unknown): void {
   // stdout은 **오직 프레임만** 나가는 통로다. 로그 한 줄이 섞이면 클라이언트가 파싱에 실패한다.
@@ -71,6 +91,13 @@ function callTool(params: Record<string, unknown>): unknown {
       .split(/\s+/)
       .filter((w) => w !== "");
     return { content: [{ type: "text", text: String(words.length) }] };
+  }
+  if (name === "write_note") {
+    const title = String(args.title ?? "");
+    notes.set(title, String(args.body ?? ""));
+    return {
+      content: [{ type: "text", text: `메모 '${title}' 저장됨 (총 ${notes.size}개)` }],
+    };
   }
   // 모르는 툴 이름은 **프로토콜 에러**다(우리가 준 목록 밖이므로 클라이언트 잘못).
   return { __error: { code: -32602, message: `그런 툴이 없다: ${String(name)}` } };

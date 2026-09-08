@@ -657,8 +657,8 @@ describe("MCP 에이전트 — 툴이 외부 서버에서 온다 (F3.2)", () => 
       mcpServer?: string;
     }>;
     const mcp = list.find((a) => a.id === "mcp");
-    // 데모 서버가 준 두 툴이 그대로 실린다.
-    expect(mcp?.tools.sort()).toEqual(["get_weather", "word_count"]);
+    // 데모 서버가 준 세 툴이 그대로 실린다.
+    expect(mcp?.tools.sort()).toEqual(["get_weather", "word_count", "write_note"]);
     // serverInfo로 붙은 서버의 정체가 드러난다.
     expect(mcp?.mcpServer).toBe("ariadne-studio-demo");
   });
@@ -668,9 +668,10 @@ describe("MCP 에이전트 — 툴이 외부 서버에서 온다 (F3.2)", () => 
       nodes: string[];
       edges: Array<{ from: string; to: string; kind: string }>;
     };
-    // 계산기 에이전트와 글자까지 같은 모양 — 툴이 원격인 걸 그래프는 모른다.
+    // 계산기 에이전트와 같은 모양 — 툴이 원격인 걸 그래프는 모른다.
+    // (엣지 종류는 이 에이전트에 승인 게이트가 걸려 조건부다 — MCP 때문이 아니라 F3.3 때문.)
     expect(g.nodes).toEqual(["model", "tools"]);
-    expect(g.edges).toContainEqual({ from: "tools", to: "model", kind: "static" });
+    expect(g.edges).toContainEqual({ from: "tools", to: "model", kind: "conditional" });
     expect(
       g.edges
         .filter((e) => e.from === "model" && e.kind === "conditional")
@@ -701,4 +702,148 @@ describe("MCP 에이전트 — 툴이 외부 서버에서 온다 (F3.2)", () => 
       expect(list.find((a) => a.id === "mcp")?.tools.length).toBeGreaterThan(0);
     }
   });
+});
+
+// 승인 게이트가 스튜디오 계약으로 드러나는가 (S12 / F3.3).
+// **서버가 상태를 안 든다** — 재개는 같은 엔드포인트에 `decision` 한 글자를 더 싣는 것뿐이라,
+// 여기서 검사할 건 "무엇이 응답에 실리는가"와 "그래프 모양이 갈리는가" 둘이다.
+describe("승인 게이트 — 스튜디오 계약 (F3.3)", () => {
+  let closeMcp: () => Promise<void>;
+
+  beforeAll(async () => {
+    closeMcp = await connectMcpAgents();
+  });
+  afterAll(async () => {
+    await closeMcp();
+  });
+
+  async function json(path: string) {
+    return (await (await studio.fetch(new Request(`http://x${path}`))).json()) as never;
+  }
+
+  it("승인이 걸린 툴 이름이 목록에 실린다 — UI가 칩에 자물쇠를 다는 근거", async () => {
+    const list = (await json("/api/agents")) as Array<{
+      id: string;
+      tools: string[];
+      approval?: string[];
+    }>;
+    const mcp = list.find((a) => a.id === "mcp");
+    expect(mcp?.approval).toEqual(["write_note"]);
+    // 읽기 툴은 안 걸린다 — 게이트가 전부를 막으면 게이트가 아니라 벽이다.
+    expect(mcp?.approval).not.toContain("get_weather");
+
+    // 게이트 없는 에이전트는 필드 자체가 없다(있던 계약이 안 바뀐다).
+    expect(list.find((a) => a.id === "calculator")?.approval).toBeUndefined();
+  });
+
+  it("실제로 안 붙은 툴은 '승인 필요'에서 빠진다 — 서버가 안 떠도 거짓말을 안 한다", async () => {
+    const list = (await json("/api/agents")) as Array<{
+      id: string;
+      tools: string[];
+      approval?: string[];
+      mcpError?: string;
+    }>;
+    const fs = list.find((a) => a.id === "filesystem");
+    // 붙었으면 선언한 쓰기 툴 중 실재하는 것만, 못 붙었으면 빈 배열.
+    for (const name of fs?.approval ?? []) {
+      expect(fs?.tools).toContain(name);
+    }
+    if (fs?.mcpError !== undefined) expect(fs.approval).toEqual([]);
+  });
+
+  it("게이트가 걸리면 그래프에 정적 엣지가 사라진다 — 멈추려면 취소 가능한 제어흐름이어야 한다", async () => {
+    const gated = (await json("/api/agents/graph?id=mcp")) as {
+      nodes: string[];
+      edges: Array<{ from: string; to: string; kind: string }>;
+    };
+    const plain = (await json("/api/agents/graph?id=calculator")) as typeof gated;
+
+    // 노드는 둘 다 같다 — 승인은 새 노드를 안 만든다.
+    expect(gated.nodes).toEqual(plain.nodes);
+    // 갈리는 건 엣지의 종류뿐이다.
+    expect(gated.edges.filter((e) => e.kind === "static")).toEqual([]);
+    expect(plain.edges).toContainEqual({ from: "__start__", to: "model", kind: "static" });
+    // 게이트 그래프에만 있는 두 갈래: 재개 진입(START→tools)과 멈춤 이탈(tools→END).
+    expect(gated.edges).toContainEqual({ from: "__start__", to: "tools", kind: "conditional" });
+    expect(gated.edges).toContainEqual({ from: "tools", to: "__end__", kind: "conditional" });
+  });
+
+  it("decision은 allow/deny만 받는다 — 'ask'는 클라이언트가 보낼 수 없다", async () => {
+    const post = (body: unknown) =>
+      studio.fetch(
+        new Request("http://x/api/agents/chat", { method: "POST", body: JSON.stringify(body) }),
+      );
+    const messages = [{ role: "human", content: "안녕" }];
+    // 사람에게 묻겠다는 뜻인데 요청을 보낸 쪽이 이미 사람이라, 받으면 무한 왕복이 된다.
+    expect((await post({ id: "mcp", messages, decision: "ask" })).status).toBe(400);
+    expect((await post({ id: "mcp", messages, decision: "무엇" })).status).toBe(400);
+  });
+});
+
+// 진짜 모델로 **멈췄다 재개**되는지. 구독 자격증명(claude CLI)만 쓰고 API 키는 안 쓴다.
+describe.skipIf(!hasCli)("승인 게이트 → 진짜 모델로 멈춤·재개 (구독 자격증명)", () => {
+  let closeMcp: () => Promise<void>;
+
+  beforeAll(async () => {
+    closeMcp = await connectMcpAgents();
+  });
+  afterAll(async () => {
+    await closeMcp();
+  });
+
+  function turn(messages: unknown[], decision?: string) {
+    return studio.fetch(
+      new Request("http://x/api/agents/chat", {
+        method: "POST",
+        body: JSON.stringify({ id: "mcp", messages, decision }),
+      }),
+    );
+  }
+
+  it("쓰기 툴 앞에서 멈추고, 승인하면 이어 돈다", async () => {
+    const first = [
+      { role: "human", content: "'회의록'이라는 제목으로 '내일 3시'라고 메모 저장해줘" },
+    ];
+    const paused = (await (await turn(first)).json()) as {
+      messages: Array<Record<string, unknown>>;
+      pending: Array<{ name: string }>;
+    };
+
+    // 멈췄다: 대기 중인 호출이 실리고, 그건 우리가 승인 목록에 올린 그 툴이다.
+    expect(paused.pending.map((c) => c.name)).toEqual(["write_note"]);
+    // 툴 결과 메시지는 하나도 없다 — 아직 아무 일도 안 일어났다.
+    expect(paused.messages.some((m) => m.role === "tool")).toBe(false);
+
+    // 재개: **같은 엔드포인트**에 이력 + decision 한 글자.
+    const history = [...first, ...paused.messages];
+    const resumed = (await (await turn(history, "allow")).json()) as {
+      messages: Array<Record<string, unknown>>;
+      steps: Array<{ nodes: string[] }>;
+      pending: unknown[];
+    };
+
+    // model을 다시 안 부르고 tools부터 시작한다(답 없는 tool_use를 되보내면 안 되므로).
+    expect(resumed.steps[0]?.nodes).toEqual(["tools"]);
+    expect(resumed.messages.some((m) => m.role === "tool")).toBe(true);
+    expect(resumed.pending).toEqual([]);
+  }, 120_000);
+
+  it("거부하면 툴은 안 돌고 모델이 다른 길을 찾는다", async () => {
+    const first = [{ role: "human", content: "'메모'라는 제목으로 '테스트'라고 저장해줘" }];
+    const paused = (await (await turn(first)).json()) as {
+      messages: Array<Record<string, unknown>>;
+      pending: Array<{ name: string }>;
+    };
+    expect(paused.pending.length).toBeGreaterThan(0);
+
+    const denied = (await (await turn([...first, ...paused.messages], "deny")).json()) as {
+      messages: Array<Record<string, unknown>>;
+      pending: unknown[];
+    };
+    // 거부도 툴 결과다 — id 짝이 맞고 status가 error다(그래서 모델이 읽고 계속 돈다).
+    const results = denied.messages.filter((m) => m.role === "tool");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.status).toBe("error");
+    expect(denied.pending).toEqual([]);
+  }, 120_000);
 });
