@@ -139,6 +139,12 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
   - UI는 서버 코드를 import 안 함(브라우저 vs Bun) → `web/src/api.ts`가 응답 모양을 다시 적음. mermaid는 CSS `!important` 대신 `themeVariables`로 다크.
   - **제거(정직):** 옛 바닐라 클라이언트 JS 문자열을 검사하던 가드들 — 대상이 `.tsx`로 옮겨가 사라짐(로직은 컴포넌트에 이식). biome CSS 파서에 `tailwindDirectives` 켬.
   - **헤드리스 크롬으로 실제 렌더 확인.** 256 pass / 4 skip. ([노트 23](notes/23-s10-react-studio.md))
+- [x] **S11 · 스튜디오 × MCP** — F3.2가 남긴 스튜디오 연동. 사이드바에 MCP 에이전트 둘: `mcp`(우리 데모 stdio 서버 — **네트워크 0 · 키 0**)와 `filesystem`(**남이 만든** 공식 `@modelcontextprotocol/server-filesystem`에 npx로). 툴 칩에 `🛰 MCP: <서버이름>` 출처 표식.
+  - **화면 쪽이 거의 안 바뀐 게 결과다.** `agentInfo`·`buildAgentGraph`·`agentTurn` 무수정 — 전부 `def.tools`만 읽고 그게 어디서 왔는지 모른다. 추가된 건 `AgentDef.mcp` 선언 한 필드 + 시작 시 채우는 `connectMcpAgents()`뿐이라 **MCP를 아는 파일이 `agents.ts` 하나로 갇힌다.**
+  - **연결 수명은 앱이 쥔다** — `connectMcpAgents()`가 정리 함수를 반환하고 `server.ts`가 SIGINT에서 부른다(F3.2의 "가변 상태는 연결에 있다"가 앱 층에서 재확인 → `createAgent`는 계속 상태 없는 함수).
+  - **한 서버가 안 떠도 스튜디오는 뜬다** — 서버별 try/catch, 실패는 `mcpError`로 UI에 원문 노출. 데모 서버는 픽스처를 **일부러 복제**(남의 패키지 `test/`를 런타임에 spawn하지 않는다).
+  - 296 pass / 4 skip — **스튜디오 밖 다섯 패키지 무수정.** ([노트 25](notes/25-s11-studio-mcp.md))
+  - **벽 → 다음:** `filesystem` 서버는 `edit_file`·`write_file`도 준다. 막을 자리가 없어 `mcp-sample/` 한 폴더로 좁힌 건 **정책이 아니라 회피** → F3.3 승인 게이트.
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
 - 이후 core가 커지면: 채널/superstep 상태 관찰, 인터럽트 재개 등.
