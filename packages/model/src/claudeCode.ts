@@ -191,12 +191,56 @@ function stripFence(text: string): string {
 }
 
 /**
+ * 텍스트에서 **최상위 `{…}` 덩어리들**을 나온 순서대로 뽑는다. **순수 함수.**
+ *
+ * 정규식(`/\{[\s\S]*\}/`)으로 하면 안 되는 이유가 실측으로 나왔다. 모델은 JSON 뒤에 산문을
+ * 덧붙이는 일이 잦은데(“…작성했습니다”), 그 산문에 중괄호가 하나라도 있으면 — 예컨대
+ * 방금 쓴 파일 내용을 `` `{"a":1}` ``처럼 되짚으면 — 탐욕 매칭의 마지막 `}`가 **산문 쪽**이라
+ * 잘린 범위가 깨진 JSON이 되고 **툴 호출이 통째로 사라진다.** 인자에 JSON·코드가 실리는 툴
+ * (`write_file`·`edit_file`)에서 그냥 재현된다.
+ *
+ * 그래서 괄호 깊이를 세되 **문자열 리터럴 안은 건너뛴다** — `"{"` 같은 내용이 깊이를 흔들면
+ * 같은 종류의 버그가 다시 생긴다.
+ */
+export function jsonObjectCandidates(text: string): string[] {
+  const found: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (ch === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        found.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+    // 짝 없는 `}`는 그냥 무시한다(산문에 흔하다).
+  }
+  return found;
+}
+
+/**
  * 텍스트에서 `tool_calls` 배열을 꺼낸다. 없으면 빈 배열.
- * 통째 파싱을 먼저 하고, 실패하면 가장 바깥 `{…}`만 긁어 재시도한다(앞뒤에 잡담이 붙은 경우).
+ * 통째 파싱을 먼저 하고, 실패하면 **균형 잡힌 `{…}` 덩어리를 순서대로** 시도한다
+ * (앞뒤에 잡담이 붙은 경우 — 앞에 붙든 뒤에 붙든 걸린다).
  */
 function extractToolCallEntries(text: string): unknown[] {
-  for (const candidate of [text, text.match(/\{[\s\S]*\}/)?.[0]]) {
-    if (candidate === undefined) continue;
+  for (const candidate of [text, ...jsonObjectCandidates(text)]) {
     try {
       const obj = JSON.parse(candidate) as { tool_calls?: unknown };
       if (Array.isArray(obj.tool_calls)) return obj.tool_calls;

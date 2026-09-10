@@ -15,6 +15,7 @@ import {
   ClaudeCodeError,
   claudeCodeChat,
   EmptyConversationError,
+  jsonObjectCandidates,
   model,
   PROVIDERS,
   parsePromptedToolCalls,
@@ -253,6 +254,35 @@ describe("parsePromptedToolCalls — 모델 텍스트를 toolCalls로 되살린�
     expect(r.content).toBe("답은 7입니다.");
   });
 
+  // ── 회귀: 실제 claude-code 응답에서 툴 호출이 통째로 사라지던 것 ──
+  //
+  // 모델은 JSON 뒤에 산문을 덧붙이는 일이 잦은데, 그 산문에 중괄호가 있으면 옛 폴백
+  // (`/\{[\s\S]*\}/`)의 마지막 `}`가 산문 쪽이라 잘린 범위가 깨진 JSON이 됐다.
+  // 인자에 JSON이 실리는 툴(write_file)에서 그냥 재현된다 — 아래가 실측 원문이다.
+  test("JSON 뒤에 중괄호 낀 산문이 붙어도 툴 호출을 살려낸다 (실측 회귀)", () => {
+    const real =
+      '{"tool_calls":[{"name":"write_file","arguments":{"path":"config.json","content":"{\\"a\\":1}"}}]}\n\n' +
+      '`config.json` 파일을 생성하고 `{"a":1}` 내용을 작성했습니다.';
+    const r = parsePromptedToolCalls(real);
+    expect(r.toolCalls).toEqual([
+      { id: "call_1", name: "write_file", args: { path: "config.json", content: '{"a":1}' } },
+    ]);
+    expect(r.content).toBe("");
+  });
+
+  test("JSON 앞에 잡담이 붙어도 읽는다", () => {
+    const r = parsePromptedToolCalls(
+      '계산해보겠습니다.\n{"tool_calls":[{"name":"add","arguments":{"a":1,"b":2}}]}',
+    );
+    expect(r.toolCalls.map((c) => c.name)).toEqual(["add"]);
+  });
+
+  test("툴 호출 없는 산문에 중괄호가 있어도 그대로 답이다", () => {
+    const r = parsePromptedToolCalls('설정은 {"a":1} 입니다.');
+    expect(r.toolCalls).toEqual([]);
+    expect(r.content).toBe('설정은 {"a":1} 입니다.');
+  });
+
   test("arguments가 문자열이면 파싱하고, 깨졌으면 invalidArgs로 원문 보존(OpenAI 비대칭과 같은 처리)", () => {
     const good = parsePromptedToolCalls(
       '{"tool_calls":[{"name":"add","arguments":"{\\"a\\":3}"}]}',
@@ -362,4 +392,28 @@ describe.skipIf(!hasCli)("실제 Claude Code 호출 (구독 자격증명)", () =
     expect(out.messages[1]?.role).toBe("ai");
     expect(out.messages[1]?.content).toContain("4");
   }, 120_000);
+});
+
+describe("jsonObjectCandidates — 균형 잡힌 최상위 {…} 뽑기", () => {
+  test("여러 덩어리를 나온 순서대로", () => {
+    expect(jsonObjectCandidates('앞 {"a":1} 사이 {"b":2} 뒤')).toEqual(['{"a":1}', '{"b":2}']);
+  });
+
+  test("중첩은 하나로 묶인다", () => {
+    expect(jsonObjectCandidates('{"a":{"b":1}}')).toEqual(['{"a":{"b":1}}']);
+  });
+
+  test("**문자열 안의 중괄호는 깊이를 안 흔든다** — 안 그러면 같은 버그가 재발한다", () => {
+    expect(jsonObjectCandidates('{"content":"{\\"a\\":1}"}')).toEqual([
+      '{"content":"{\\"a\\":1}"}',
+    ]);
+  });
+
+  test("짝 없는 닫는 괄호는 무시한다(산문에 흔하다)", () => {
+    expect(jsonObjectCandidates('} 닫기만 있음 {"a":1}')).toEqual(['{"a":1}']);
+  });
+
+  test("안 닫힌 덩어리는 안 낸다", () => {
+    expect(jsonObjectCandidates('{"a":1')).toEqual([]);
+  });
 });

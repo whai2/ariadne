@@ -21,6 +21,7 @@ export type { ClaudeCodeConfig, ClaudeCodeResult, RunCli } from "./claudeCode";
 export {
   buildArgs,
   claudeCodeChat,
+  jsonObjectCandidates,
   parsePromptedToolCalls,
   parseResult,
   renderToolProtocol,
