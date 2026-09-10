@@ -30,10 +30,10 @@ describe("migrate — 스키마 적용", () => {
     db.close();
   });
 
-  test("테이블 셋 — 겪은 일 · 내린 결정 · 그 둘에서 나온 사실", () => {
-    // F4.1은 앞의 둘뿐이었다. `facts`는 F4.2에서 **처음 필요해져서** 붙었고,
-    // `CREATE TABLE IF NOT EXISTS`뿐이라 기존 DB 파일에도 그냥 붙는다 —
-    // 그래서 마이그레이션(버전·ALTER)이 아직 이 저장소에 없다.
+  test("테이블 넷 — 겪은 일 · 내린 결정 · 사실 · 그 사실을 시험한 기록", () => {
+    // 단계마다 하나씩 늘었다: F4.1(episodes·value_events) → F4.2(facts) → F4.3(injections).
+    // 전부 **처음 필요해졌을 때** 붙었고, `CREATE TABLE IF NOT EXISTS`뿐이라 기존 DB 파일에도
+    // 그냥 붙는다 — 그래서 마이그레이션(버전·ALTER)이 아직 이 저장소에 없다.
     const db = fresh();
     const names = (
       db
@@ -42,7 +42,7 @@ describe("migrate — 스키마 적용", () => {
         name: string;
       }[]
     ).map((r) => r.name);
-    expect(names.sort()).toEqual(["episodes", "facts", "value_events"]);
+    expect(names.sort()).toEqual(["episodes", "facts", "injections", "value_events"]);
     db.close();
   });
 
@@ -107,6 +107,25 @@ describe("제약 — 스키마가 직접 막는 것", () => {
     expect(() =>
       db.run("INSERT INTO episodes (agent, started_at, input_count) VALUES (?,?,?)", ["a", 1, 0]),
     ).toThrow();
+    db.close();
+  });
+});
+
+describe("injections — 시험 기록의 제약 (F4.3)", () => {
+  test("outcome은 셋뿐이고, NULL(아직 판정 전)은 허용된다", () => {
+    const db = fresh();
+    const insert = (outcome: string | null) =>
+      db.run("INSERT INTO injections (fact_id, episode_id, at, outcome) VALUES (?,?,?,?)", [
+        1,
+        1,
+        1,
+        outcome,
+      ]);
+    expect(() => insert(null)).not.toThrow(); // 턴이 끝나야 안다
+    expect(() => insert("reinforce")).not.toThrow();
+    expect(() => insert("decay")).not.toThrow();
+    expect(() => insert("neutral")).not.toThrow();
+    expect(() => insert("좋음")).toThrow();
     db.close();
   });
 });

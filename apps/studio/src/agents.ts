@@ -19,7 +19,7 @@ import type {
   ToolCall,
 } from "@ariadne/core";
 import { connectStdio, type McpClient, mcpTools, type StdioServerConfig } from "@ariadne/mcp";
-import type { FactRow, MemoryStore } from "@ariadne/memory";
+import { chooseFact, judge, type MemoryStore, type ScoredFact } from "@ariadne/memory";
 import { type ChatModel, model } from "@ariadne/model";
 import { type AnyTool, add, multiply, now } from "@ariadne/tools";
 import { statusOf } from "./chat";
@@ -287,7 +287,7 @@ export function approvalPolicy(
  */
 export function composeSystem(
   base: string | undefined,
-  facts: readonly FactRow[],
+  facts: readonly ScoredFact[],
 ): string | undefined {
   if (facts.length === 0) return base;
   const block = ["[기억한 것]", ...facts.map((f) => `- ${f.text}`)].join("\n");
@@ -299,7 +299,7 @@ export function buildAgentGraph(
   preview = false,
   decision?: Approval,
   hooks?: TurnHooks,
-  facts: readonly FactRow[] = [],
+  facts: readonly ScoredFact[] = [],
 ): CompiledGraph<MessagesState> {
   const chatModel = preview
     ? previewModel
@@ -350,21 +350,28 @@ export async function agentTurn(
   // 굳으므로 목표 장면이 그대로 성립한다.
   memory?.consolidate(def.id);
 
-  // **선호형 하나만 고른다** — 이 커밋엔 선택 기계가 없다. F4.0 실험이 알려준 답을
-  // **코드에 하드코딩**한 것이고, 기계는 아직 아무것도 안 배웠다. 그게 다음 단계의 벽이다.
-  const facts = (memory?.facts(def.id) ?? []).filter((f) => f.level === "preference");
+  // **이번 턴에 시험할 사실 하나** (F4.3). F4.2까지는 여기서 `level === "preference"`를
+  // 손으로 걸렀는데, 그건 실험 결과를 코드에 박은 것이었다. 이제 **쓰이는 것이 남는다.**
+  const fact = chooseFact(memory?.scoredFacts(def.id) ?? []);
 
   // 에피소드를 **먼저** 연다 — 승인 게이트가 run *도중에* 이 id로 가치 이벤트를 써야 한다.
   const episode = memory?.beginEpisode(def.id, history);
+  // 시험을 기록한다 — 결과는 턴이 끝나야 안다.
+  const injection =
+    memory !== undefined && episode !== undefined && fact !== undefined
+      ? memory.beginInjection(fact.id, episode)
+      : undefined;
   const hooks: TurnHooks | undefined =
     memory === undefined || episode === undefined
       ? undefined
       : { onDecision: (kind, targets) => memory.recordValueEvent(episode, def.id, kind, targets) };
 
-  const graph = buildAgentGraph(def, false, decision, hooks, facts);
+  const graph = buildAgentGraph(def, false, decision, hooks, fact === undefined ? [] : [fact]);
   const steps: StepUpdate<MessagesState>[] = [];
   let produced: BaseMessage[] = [];
   let pending: ToolCall[] = [];
+  // 던지면 무슨 일이 있었는지 모른다 — **모르는 턴은 시행으로 안 센다**(아래 finally).
+  let finished = false;
   try {
     for await (const step of graph.stream({ messages: history })) {
       steps.push(step);
@@ -372,6 +379,7 @@ export async function agentTurn(
     const final = steps.at(-1)?.state.messages ?? history;
     produced = final.slice(history.length);
     pending = pendingToolCalls(final);
+    finished = true;
     return { messages: produced, steps, pending };
   } finally {
     // **던져도 닫는다.** 안 그러면 실패한 run이 전부 `running`으로 남아 관찰이 거짓말이 된다.
@@ -379,6 +387,10 @@ export async function agentTurn(
     // 붙었다는 뜻일 뿐이다 — 무엇이 잘못됐는지는 에러가 이미 호출자에게 갔다.
     if (memory !== undefined && episode !== undefined) {
       memory.endEpisode(episode, produced, pending.length > 0 ? "paused" : "completed");
+    }
+    if (memory !== undefined && injection !== undefined && fact !== undefined) {
+      // 판정이 `undefined`면 시행 기록 자체가 지워진다 — 모르는 걸 0점으로 남기면 잡음이다.
+      memory.endInjection(injection, finished ? judge(fact.target, produced, pending) : undefined);
     }
   }
 }

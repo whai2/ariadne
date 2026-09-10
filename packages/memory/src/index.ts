@@ -22,9 +22,13 @@ export type {
   EpisodeStatus,
   FactLevel,
   FactRow,
+  InjectionOutcome,
+  InjectionRow,
+  ScoredFact,
   ValueEventKind,
   ValueEventRow,
 } from "./schema";
 export { migrate, SCHEMA_SQL } from "./schema";
+export { chooseFact, judge } from "./select";
 export type { MemoryStoreOptions } from "./store";
 export { MemoryStore } from "./store";

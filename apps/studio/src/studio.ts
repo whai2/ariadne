@@ -145,7 +145,8 @@ export function createStudio(examples: Example[], memory?: MemoryStore): Studio 
           episodes: memory.episodes(agent),
           events: memory.valueEvents(agent),
           // 사실은 에이전트별이라, agent를 안 주면 무엇을 낼지 정의가 없다 — 빈 배열.
-          facts: agent === undefined ? [] : memory.facts(agent),
+          // **성적까지 실어 보낸다**(F4.3) — 어느 후보가 이기고 지는지가 관찰의 전부다.
+          facts: agent === undefined ? [] : memory.scoredFacts(agent),
         });
       }
 

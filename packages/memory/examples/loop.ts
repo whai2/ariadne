@@ -8,8 +8,8 @@
 // 경로**라서, 모델을 넣으면 오히려 관찰이 흔들린다. 문장이 실제로 행동을 바꾸는지는 F4.0
 // 실험(N=6)이 이미 쟀고, 스튜디오 테스트가 진짜 모델로 다시 잰다.
 
-import { ai, human } from "@ariadne/core";
-import { MemoryStore, proposeFacts } from "../src/index";
+import { ai, human, tool as toolMessage } from "@ariadne/core";
+import { chooseFact, judge, MemoryStore, proposeFacts } from "../src/index";
 
 let clock = 1_700_000_000_000;
 const memory = MemoryStore.open(":memory:", { now: () => (clock += 1000) });
@@ -37,15 +37,42 @@ denyOnce();
 console.log(`  공고화 → 새 사실 ${memory.consolidate(AGENT)}개\n`);
 
 for (const f of memory.facts(AGENT)) {
-  const mark = f.level === "preference" ? "▶" : " ";
-  console.log(`  ${mark} [${f.level.padEnd(10)}] ${f.text}`);
+  console.log(`    [${f.level.padEnd(10)}] ${f.text}`);
 }
-console.log(`\n  ▶ = 스튜디오가 지금 주입하는 것. 나머지 둘은 만들어만 두고 안 쓴다.`);
-console.log(`     어느 게 쓸모 있는지는 아직 기계가 모른다 — 실험 결과를 코드에 박아뒀을 뿐이다.`);
+console.log(`\n  셋 다 시행 0이다. **어느 게 쓸모 있는지 아직 아무도 모른다.**`);
+
+console.log("\n━━━ 선택 기계가 도는 12턴 ━━━");
+// 매 턴 하나만 시험한다. 사건형이면 모델이 그냥 부르고, 아니면 먼저 묻는다 —
+// 그게 F4.0 실험의 실측이다(여기선 재현일 뿐, 증거는 그 실험과 스튜디오 테스트다).
+for (let turn = 1; turn <= 12; turn++) {
+  const fact = chooseFact(memory.scoredFacts(AGENT));
+  if (fact === undefined) break;
+  const ep = memory.beginEpisode(AGENT, []);
+  const inj = memory.beginInjection(fact.id, ep);
+  const produced =
+    fact.level === "episodic"
+      ? [ai("", undefined, [call]), toolMessage("c1", "wrote notes.md")]
+      : [ai("쓸까요?")];
+  const outcome = judge(fact.target, produced, []);
+  memory.endInjection(inj, outcome);
+  memory.endEpisode(ep, produced, "completed");
+  const icon = outcome === "reinforce" ? "＋" : outcome === "decay" ? "－" : "＝";
+  console.log(`  ${String(turn).padStart(2)}턴  ${icon}  [${fact.level}] \uc744 \uc2dc\ud5d8`);
+}
+
+console.log("\n━━━ 성적표 ━━━");
+for (const f of [...memory.scoredFacts(AGENT)].sort((a, b) => b.strength - a.strength)) {
+  const bar = f.strength >= 0 ? "█".repeat(f.strength) : "░".repeat(-f.strength);
+  console.log(
+    `  [${f.level.padEnd(10)}] 시행 ${f.trials}  강도 ${String(f.strength).padStart(3)}  ${bar}`,
+  );
+}
+console.log("\n  → **사건형이 꼴찌다.** 아무도 안 알려줬는데 기계가 알아냈다.");
+console.log("     라운드로빈이라 셋 다 같은 횟수만큼 기회를 받았다 — 그래야 귀속이 된다.");
 
 console.log("\n━━━ 다음 턴의 system ━━━");
-const injected = memory.facts(AGENT).filter((f) => f.level === "preference");
-const block = ["[기억한 것]", ...injected.map((f) => `- ${f.text}`)].join("\n");
+const injected = chooseFact(memory.scoredFacts(AGENT));
+const block = ["[기억한 것]", `- ${injected?.text ?? ""}`].join("\n");
 console.log(["너는 파일 비서다. 답은 간결하게 한국어로.", block].join("\n\n"));
 
 console.log("\n━━━ 허용이 쌓이면 ━━━");
@@ -58,6 +85,6 @@ const events = memory.valueEvents(AGENT, 1000);
 console.log(
   `  deny 2 / allow 2 → 새 후보 ${proposeFacts(events, AGENT).length}개 (거부가 허용보다 많아야 한다)`,
 );
-console.log("  이미 만들어진 사실은 그대로 남는다 — 지우는 건 선택 기계의 몫이다(F4.3).");
+console.log("  이미 만들어진 사실은 그대로 남는다 — 도태된 것도 안 지운다(왜 졌는지가 근거다).");
 
 memory.close();

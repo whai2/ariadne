@@ -18,7 +18,9 @@ import { proposeFacts } from "./consolidate";
 import {
   type EpisodeRow,
   type FactRow,
+  type InjectionOutcome,
   migrate,
+  type ScoredFact,
   type ValueEventKind,
   type ValueEventRow,
 } from "./schema";
@@ -154,6 +156,52 @@ export class MemoryStore {
   /** 이 에이전트가 아는 사실들. 만든 순서대로(= 후보 셋이 나란히 보인다). */
   facts(agent: string): FactRow[] {
     return this.db.query("SELECT * FROM facts WHERE agent = ? ORDER BY id").all(agent) as FactRow[];
+  }
+
+  /**
+   * 사실 + 성적 (F4.3). `injections`를 좌외부조인해 시행 수와 강도를 **그때그때 집계한다.**
+   * 캐시하지 않는 건 "왜 이 사실이 이겼나"를 행으로 되짚을 수 있게 하려는 것이다.
+   *
+   * 순서는 id 고정 — 무엇을 고를지는 `chooseFact`가 정한다(저장소는 정책을 안 갖는다).
+   */
+  scoredFacts(agent: string): ScoredFact[] {
+    return this.db
+      .query(
+        `SELECT f.*,
+                COUNT(i.outcome) AS trials,
+                COALESCE(SUM(CASE i.outcome
+                               WHEN 'reinforce' THEN 1
+                               WHEN 'decay'     THEN -1
+                               ELSE 0 END), 0) AS strength
+         FROM facts f
+         LEFT JOIN injections i ON i.fact_id = f.id
+         WHERE f.agent = ?
+         GROUP BY f.id
+         ORDER BY f.id`,
+      )
+      .all(agent) as ScoredFact[];
+  }
+
+  /** 이번 턴에 이 사실을 시험한다고 적는다. 결과는 아직 모른다(`outcome` NULL). */
+  beginInjection(factId: number, episodeId: number): number {
+    const r = this.db.run("INSERT INTO injections (fact_id, episode_id, at) VALUES (?, ?, ?)", [
+      factId,
+      episodeId,
+      this.now(),
+    ]);
+    return Number(r.lastInsertRowid);
+  }
+
+  /**
+   * 판정을 확정한다. **`undefined`면 행을 지운다** — run이 던진 경우처럼 무슨 일이 있었는지
+   * 모르는 턴은 **시행으로 세면 안 된다.** 모르는 걸 0점으로 기록하면 그건 관찰이 아니라 잡음이다.
+   */
+  endInjection(id: number, outcome: InjectionOutcome | undefined): void {
+    if (outcome === undefined) {
+      this.db.run("DELETE FROM injections WHERE id = ?", [id]);
+      return;
+    }
+    this.db.run("UPDATE injections SET outcome = ? WHERE id = ?", [outcome, id]);
   }
 
   close(): void {

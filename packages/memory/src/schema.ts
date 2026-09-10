@@ -82,6 +82,39 @@ export interface FactRow {
 }
 
 /**
+ * 주입 한 번의 결과 (F4.3).
+ *
+ * - `reinforce` 대상 툴을 **안 불렀다.** 사실이 막았다고 본다.
+ * - `decay`     대상 툴을 **그냥 불렀다.** 사실이 못 막았다.
+ * - `neutral`   불렀는데 **승인 게이트에 걸려 멈췄다** — 게이트가 잡은 것이지 사실이 잡은 게 아니다.
+ *
+ * `NULL`은 "아직 판정 전"이다(턴이 끝나야 안다).
+ */
+export type InjectionOutcome = "reinforce" | "decay" | "neutral";
+
+/** `injections` 행 그대로. **선택 기계의 실험 노트**다. */
+export interface InjectionRow {
+  id: number;
+  fact_id: number;
+  episode_id: number;
+  at: number;
+  outcome: InjectionOutcome | null;
+}
+
+/**
+ * 사실 + 그 사실의 성적 (F4.3). `injections`에서 집계된다.
+ *
+ * **점수를 `facts`에 캐시하지 않는 게 판단이다.** 숫자만 남기면 "왜 이 사실이 이겼나"의
+ * 근거가 사라진다. 시행 하나하나가 행으로 남아 있어야 되짚을 수 있다.
+ */
+export interface ScoredFact extends FactRow {
+  /** 판정이 끝난 주입 횟수. `neutral`도 시행으로 센다. */
+  trials: number;
+  /** `reinforce` +1 · `decay` -1 · `neutral` 0의 합. */
+  strength: number;
+}
+
+/**
  * DDL. **`IF NOT EXISTS`뿐이라 몇 번 적용해도 안전하다** — 그래서 아직 버전 개념(`user_version`,
  * `ALTER TABLE`)이 없다. 다음 단계에서 테이블이 늘어도 같은 방식으로 붙는다.
  *
@@ -123,6 +156,16 @@ CREATE TABLE IF NOT EXISTS facts (
 );
 
 CREATE INDEX IF NOT EXISTS facts_agent ON facts(agent);
+
+CREATE TABLE IF NOT EXISTS injections (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  fact_id    INTEGER NOT NULL REFERENCES facts(id),
+  episode_id INTEGER NOT NULL REFERENCES episodes(id),
+  at         INTEGER NOT NULL,
+  outcome    TEXT CHECK (outcome IN ('reinforce','decay','neutral'))
+);
+
+CREATE INDEX IF NOT EXISTS injections_fact ON injections(fact_id);
 `;
 
 /**

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { type FactRow, MemoryStore } from "@ariadne/memory";
+import { chooseFact, MemoryStore, type ScoredFact } from "@ariadne/memory";
 import {
   agents,
   approvalPolicy,
@@ -981,7 +981,7 @@ describe.skipIf(!hasCli)("메모리 기록 → 진짜 모델 (구독 자격증�
 // 기억한 사실이 **프롬프트로 흘러가는가** (F4.2).
 // 핵심은 `createAgent`도 core도 안 고쳤다는 것이다 — 이미 열려 있던 system 경로를 썼을 뿐이다.
 describe("메모리 주입 — 사실이 system으로 간다 (F4.2)", () => {
-  const fact = (over: Partial<FactRow> = {}): FactRow => ({
+  const fact = (over: Partial<ScoredFact> = {}): ScoredFact => ({
     id: 1,
     agent: "fs",
     text: "사용자는 write_file이(가) 확인 없이 실행되는 것을 원하지 않는다.",
@@ -989,6 +989,8 @@ describe("메모리 주입 — 사실이 system으로 간다 (F4.2)", () => {
     level: "preference",
     origin: "deny 2 / allow 0",
     created_at: 1,
+    trials: 0,
+    strength: 0,
     ...over,
   });
 
@@ -1047,6 +1049,66 @@ describe("메모리 주입 — 사실이 system으로 간다 (F4.2)", () => {
     };
     expect(body.facts.map((f) => f.level)).toEqual(["episodic", "preference", "rule"]);
     expect(body.facts.every((f) => f.target === "write_note")).toBe(true);
+    memory.close();
+  });
+});
+
+// 선택 기계가 스튜디오 계약으로 드러나는가 (F4.3).
+// **하드코딩을 걷어낸 게 이 단계다** — F4.2까지는 level === "preference"를 손으로 걸렀다.
+describe("선택 기계 — 쓰이는 것이 남는다 (F4.3)", () => {
+  /** 거부 2회로 후보 셋을 만든 스토어. */
+  function seeded() {
+    const memory = MemoryStore.open();
+    const ep = memory.beginEpisode("mcp", []);
+    memory.recordValueEvent(ep, "mcp", "deny", ["write_note"]);
+    memory.recordValueEvent(ep, "mcp", "deny", ["write_note"]);
+    memory.consolidate("mcp");
+    return memory;
+  }
+
+  it("GET /api/memory 가 **성적까지** 준다 — 누가 이기고 지는지가 관찰의 전부다", async () => {
+    const memory = seeded();
+    const s = createStudio(examples, memory);
+    const body = (await (await s.fetch(new Request("http://x/api/memory?agent=mcp"))).json()) as {
+      facts: Array<{ level: string; trials: number; strength: number }>;
+    };
+    expect(body.facts.map((f) => f.level)).toEqual(["episodic", "preference", "rule"]);
+    expect(body.facts.every((f) => f.trials === 0 && f.strength === 0)).toBe(true);
+    memory.close();
+  });
+
+  it("이번 턴에 고르는 건 **하나**다 — 셋을 동시에 넣으면 귀속이 안 된다", () => {
+    const memory = seeded();
+    const chosen = chooseFact(memory.scoredFacts("mcp"));
+    expect(chosen).toBeDefined();
+    // 그리고 그게 선호형이라는 보장이 **없다** — 하드코딩을 걷어냈으므로.
+    expect(
+      composeSystem("base", [chosen as never])
+        ?.split("\n")
+        .filter((l) => l.startsWith("- ")).length,
+    ).toBe(1);
+    memory.close();
+  });
+
+  it("주입한 턴이 시행으로 남는다 — 모델 없이도 계약이 보인다", async () => {
+    const memory = seeded();
+    const s = createStudio(examples, memory);
+    await s.fetch(
+      new Request("http://x/api/agents/chat", {
+        method: "POST",
+        body: JSON.stringify({ id: "mcp", messages: [{ role: "human", content: "안녕" }] }),
+      }),
+    );
+    // 모델이 있든(진짜 호출) 없든(던짐) 에피소드는 닫힌다. 시행은 **끝까지 돈 경우에만** 센다.
+    const total = memory.scoredFacts("mcp").reduce((n, f) => n + f.trials, 0);
+    expect(total).toBeLessThanOrEqual(1);
+    memory.close();
+  }, 120_000);
+
+  it("사실이 없는 에이전트는 아무것도 안 고른다 — 주입도 시행도 없다", () => {
+    const memory = MemoryStore.open();
+    expect(chooseFact(memory.scoredFacts("calculator"))).toBeUndefined();
+    expect(composeSystem("base", [])).toBe("base");
     memory.close();
   });
 });
