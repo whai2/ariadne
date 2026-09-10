@@ -14,7 +14,14 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { BaseMessage } from "@ariadne/core";
-import { type EpisodeRow, migrate, type ValueEventKind, type ValueEventRow } from "./schema";
+import { proposeFacts } from "./consolidate";
+import {
+  type EpisodeRow,
+  type FactRow,
+  migrate,
+  type ValueEventKind,
+  type ValueEventRow,
+} from "./schema";
 
 export interface MemoryStoreOptions {
   /**
@@ -118,6 +125,35 @@ export class MemoryStore {
       : (this.db
           .query("SELECT * FROM value_events WHERE agent = ? ORDER BY id DESC LIMIT ?")
           .all(agent, limit) as ValueEventRow[]);
+  }
+
+  /**
+   * 쌓인 가치 신호를 사실 후보로 굳힌다 (F4.2). 새로 생긴 개수를 돌려준다.
+   *
+   * **멱등이다.** `UNIQUE(agent, text)` + `INSERT OR IGNORE`라 몇 번 불러도 안전하고,
+   * 그래서 "어디까지 공고화했나"를 표시하는 플래그가 필요 없다 — 매번 전체를 다시 집계한다.
+   * 값이 싸서 그래도 되고(로컬 SQLite 카운트), **상태를 하나 덜 만드는 쪽**이 낫다.
+   *
+   * 부수 효과 하나가 여기 딸려 있다: 이미 도태된 사실이 재공고화돼도 **기존 행을 안 건드리므로
+   * 부활하지 않는다.** 선택 기록(F4.3)이 그대로 살아 있다.
+   */
+  consolidate(agent: string): number {
+    const drafts = proposeFacts(this.valueEvents(agent, Number.MAX_SAFE_INTEGER), agent);
+    const at = this.now();
+    let added = 0;
+    for (const d of drafts) {
+      const r = this.db.run(
+        "INSERT OR IGNORE INTO facts (agent, text, target, level, origin, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        [d.agent, d.text, d.target, d.level, d.origin, at],
+      );
+      added += r.changes;
+    }
+    return added;
+  }
+
+  /** 이 에이전트가 아는 사실들. 만든 순서대로(= 후보 셋이 나란히 보인다). */
+  facts(agent: string): FactRow[] {
+    return this.db.query("SELECT * FROM facts WHERE agent = ? ORDER BY id").all(agent) as FactRow[];
   }
 
   close(): void {

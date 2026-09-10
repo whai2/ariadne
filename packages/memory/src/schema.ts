@@ -55,6 +55,33 @@ export interface ValueEventRow {
 }
 
 /**
+ * 사실의 **추상화 수준** (F4.2).
+ *
+ * **형식(서술/명령)이 아니라 이 축이 행동을 가른다** — F4.0 실험이 실측으로 보여줬다.
+ * 사건을 그대로 옮긴 문장은 모델이 무시하고(6/6 즉시 호출 = 기준선과 동일),
+ * 거기서 선호나 규칙을 뽑아낸 문장만 행동을 바꾼다(0/6).
+ *
+ * 그래서 `kind`(의미/절차) 같은 **형식 컬럼은 없다.** 근거가 없기 때문이다.
+ * 이 컬럼은 **순위에 안 쓰인다** — 무엇이 살아남을지는 사용이 정한다(F4.3).
+ * 여기 있는 건 "사건형이 도태되는 것"을 **관찰하기 위해서**다.
+ */
+export type FactLevel = "episodic" | "preference" | "rule";
+
+/** `facts` 행 그대로. */
+export interface FactRow {
+  id: number;
+  agent: string;
+  /** system에 그대로 실릴 한 문장. */
+  text: string;
+  /** 어느 툴에 대한 사실인가. 평가의 귀속 키가 된다(F4.3). */
+  target: string;
+  level: FactLevel;
+  /** 왜 이 사실이 생겼나. 예: `"deny 2 / allow 0"`. 되짚을 수 있어야 한다. */
+  origin: string;
+  created_at: number;
+}
+
+/**
  * DDL. **`IF NOT EXISTS`뿐이라 몇 번 적용해도 안전하다** — 그래서 아직 버전 개념(`user_version`,
  * `ALTER TABLE`)이 없다. 다음 단계에서 테이블이 늘어도 같은 방식으로 붙는다.
  *
@@ -83,6 +110,19 @@ CREATE TABLE IF NOT EXISTS value_events (
 );
 
 CREATE INDEX IF NOT EXISTS value_events_agent_target ON value_events(agent, target);
+
+CREATE TABLE IF NOT EXISTS facts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent      TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  target     TEXT NOT NULL,
+  level      TEXT NOT NULL CHECK (level IN ('episodic','preference','rule')),
+  origin     TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(agent, text)
+);
+
+CREATE INDEX IF NOT EXISTS facts_agent ON facts(agent);
 `;
 
 /**

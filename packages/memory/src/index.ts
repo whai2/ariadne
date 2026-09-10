@@ -15,9 +15,13 @@
 // 참조: langgraph `libs/checkpoint/langgraph/store/base` — 원본도 **체크포인터(실행 상태)와
 // 스토어(장기 기억)를 다른 것으로** 갈라놨다. 우리가 만드는 건 뒤쪽이다.
 
+export type { FactDraft } from "./consolidate";
+export { DENY_THRESHOLD, proposeFacts } from "./consolidate";
 export type {
   EpisodeRow,
   EpisodeStatus,
+  FactLevel,
+  FactRow,
   ValueEventKind,
   ValueEventRow,
 } from "./schema";

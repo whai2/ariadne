@@ -30,7 +30,10 @@ describe("migrate — 스키마 적용", () => {
     db.close();
   });
 
-  test("테이블은 둘뿐이다 — 내용과 가치를 가른 게 이 스키마의 전부다", () => {
+  test("테이블 셋 — 겪은 일 · 내린 결정 · 그 둘에서 나온 사실", () => {
+    // F4.1은 앞의 둘뿐이었다. `facts`는 F4.2에서 **처음 필요해져서** 붙었고,
+    // `CREATE TABLE IF NOT EXISTS`뿐이라 기존 DB 파일에도 그냥 붙는다 —
+    // 그래서 마이그레이션(버전·ALTER)이 아직 이 저장소에 없다.
     const db = fresh();
     const names = (
       db
@@ -39,7 +42,31 @@ describe("migrate — 스키마 적용", () => {
         name: string;
       }[]
     ).map((r) => r.name);
-    expect(names.sort()).toEqual(["episodes", "value_events"]);
+    expect(names.sort()).toEqual(["episodes", "facts", "value_events"]);
+    db.close();
+  });
+
+  test("같은 에이전트에 같은 문장은 하나뿐 — 재공고화가 멱등인 근거", () => {
+    const db = fresh();
+    const insert = (agent: string, text: string) =>
+      db.run(
+        "INSERT INTO facts (agent, text, target, level, origin, created_at) VALUES (?,?,?,?,?,?)",
+        [agent, text, "rm", "preference", "deny 2 / allow 0", 1],
+      );
+    expect(() => insert("a", "같은 문장")).not.toThrow();
+    expect(() => insert("a", "같은 문장")).toThrow(); // UNIQUE(agent, text)
+    expect(() => insert("b", "같은 문장")).not.toThrow(); // 다른 에이전트는 별개
+    db.close();
+  });
+
+  test("모르는 level은 CHECK가 막는다", () => {
+    const db = fresh();
+    expect(() =>
+      db.run(
+        "INSERT INTO facts (agent, text, target, level, origin, created_at) VALUES (?,?,?,?,?,?)",
+        ["a", "t", "rm", "절차", "o", 1],
+      ),
+    ).toThrow();
     db.close();
   });
 });

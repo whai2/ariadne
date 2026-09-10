@@ -19,7 +19,7 @@ import type {
   ToolCall,
 } from "@ariadne/core";
 import { connectStdio, type McpClient, mcpTools, type StdioServerConfig } from "@ariadne/mcp";
-import type { MemoryStore } from "@ariadne/memory";
+import type { FactRow, MemoryStore } from "@ariadne/memory";
 import { type ChatModel, model } from "@ariadne/model";
 import { type AnyTool, add, multiply, now } from "@ariadne/tools";
 import { statusOf } from "./chat";
@@ -270,11 +270,36 @@ export function approvalPolicy(
  *
  * `decision`은 승인/거부로 **재개**할 때만 준다.
  */
+/**
+ * 에이전트의 system 지시에 **기억한 사실을 덧붙인다** (F4.2).
+ *
+ * **여기가 memory와 agent 링이 만나는 유일한 자리다.** 그리고 이게 이 커밋에서 가장 중요한
+ * 사실인데 — **`createAgent`도 core도 안 고쳤다.** 이미 열려 있던 길이라서다:
+ * `AgentConfig.system`이 `model.invoke({system})`으로 가고, 어댑터가 그걸 프로바이더의
+ * system 자리로 올린다. 그래서 메모리 주입은 **새 노드도, 새 채널도, 새 실행 개념도** 아니라
+ * 그냥 **문자열 합치기**다.
+ *
+ * `messages`에 system 메시지를 끼우는 길도 있었는데 그건 지뢰다 — `agentTurn`이 새 메시지를
+ * 위치(`slice(history.length)`)로 자르므로 어긋나고, 이력에 눌어붙어 매 턴 재전송된다.
+ *
+ * **맨 뒤에 붙인다.** 사용자 지시 뒤에 와야 덜 묻힌다(claude-code 어댑터가 툴 규약을 마지막에
+ * 붙이는 것과 같은 이유).
+ */
+export function composeSystem(
+  base: string | undefined,
+  facts: readonly FactRow[],
+): string | undefined {
+  if (facts.length === 0) return base;
+  const block = ["[기억한 것]", ...facts.map((f) => `- ${f.text}`)].join("\n");
+  return [base, block].filter((x): x is string => x !== undefined && x !== "").join("\n\n");
+}
+
 export function buildAgentGraph(
   def: AgentDef,
   preview = false,
   decision?: Approval,
   hooks?: TurnHooks,
+  facts: readonly FactRow[] = [],
 ): CompiledGraph<MessagesState> {
   const chatModel = preview
     ? previewModel
@@ -285,7 +310,10 @@ export function buildAgentGraph(
   return createAgent({
     model: chatModel,
     tools: def.tools,
-    ...(def.system === undefined ? {} : { system: def.system }),
+    ...(() => {
+      const system = composeSystem(def.system, facts);
+      return system === undefined ? {} : { system };
+    })(),
     ...(def.maxToolRounds === undefined ? {} : { maxToolRounds: def.maxToolRounds }),
     ...(gated ? { approval: approvalPolicy(def.approval ?? [], decision, hooks) } : {}),
   });
@@ -317,6 +345,15 @@ export async function agentTurn(
   decision?: Approval,
   memory?: MemoryStore,
 ): Promise<AgentReply> {
+  // **턴 시작에 공고화한다** (F4.2). "유휴 시 배치"는 타이머라는 새 수명주기를 부르는데,
+  // 그 개념이 지금 답하는 질문이 없다. 두 번째 턴에서 거부가 2회 쌓이면 **세 번째 턴 시작 시**
+  // 굳으므로 목표 장면이 그대로 성립한다.
+  memory?.consolidate(def.id);
+
+  // **선호형 하나만 고른다** — 이 커밋엔 선택 기계가 없다. F4.0 실험이 알려준 답을
+  // **코드에 하드코딩**한 것이고, 기계는 아직 아무것도 안 배웠다. 그게 다음 단계의 벽이다.
+  const facts = (memory?.facts(def.id) ?? []).filter((f) => f.level === "preference");
+
   // 에피소드를 **먼저** 연다 — 승인 게이트가 run *도중에* 이 id로 가치 이벤트를 써야 한다.
   const episode = memory?.beginEpisode(def.id, history);
   const hooks: TurnHooks | undefined =
@@ -324,7 +361,7 @@ export async function agentTurn(
       ? undefined
       : { onDecision: (kind, targets) => memory.recordValueEvent(episode, def.id, kind, targets) };
 
-  const graph = buildAgentGraph(def, false, decision, hooks);
+  const graph = buildAgentGraph(def, false, decision, hooks, facts);
   const steps: StepUpdate<MessagesState>[] = [];
   let produced: BaseMessage[] = [];
   let pending: ToolCall[] = [];

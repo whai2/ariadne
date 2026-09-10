@@ -61,7 +61,7 @@ export interface Studio {
  * - POST /api/chat       → { spec, messages, system, shape } 한 턴 대화 (그래프로 돈다)
  * - GET  /api/agents     → 등록된 에이전트 목록(설정 + 준비 상태)
  * - GET  /api/agents/graph?id → 그 에이전트의 그래프 구조(자격증명 없이)
- * - GET  /api/memory?agent= → 쌓인 에피소드와 가치 이벤트 (F4.1). 스토어가 없으면 빈 배열.
+ * - GET  /api/memory?agent= → 쌓인 에피소드·가치 이벤트·사실 (F4.1·F4.2). 스토어가 없으면 빈 배열.
  * - POST /api/agents/chat → { id, messages, decision? } 그 에이전트로 한 턴.
  *                           `decision`("allow"|"deny")은 승인 대기에서 **재개**할 때만 (F3.3).
  *                           재개에 새 엔드포인트가 없는 게 요점이다 — 상태가 messages뿐이라
@@ -139,11 +139,13 @@ export function createStudio(examples: Example[], memory?: MemoryStore): Studio 
       if (req.method === "GET" && url.pathname === "/api/memory") {
         // **스토어가 없으면 조용히 빈 배열이다.** 테스트와 일회성 실행이 파일을 안 만들게
         // 스튜디오는 메모리 없이도 그대로 돈다 — 기존 52개 테스트가 그 증거다.
-        if (memory === undefined) return Response.json({ episodes: [], events: [] });
+        if (memory === undefined) return Response.json({ episodes: [], events: [], facts: [] });
         const agent = url.searchParams.get("agent") ?? undefined;
         return Response.json({
           episodes: memory.episodes(agent),
           events: memory.valueEvents(agent),
+          // 사실은 에이전트별이라, agent를 안 주면 무엇을 낼지 정의가 없다 — 빈 배열.
+          facts: agent === undefined ? [] : memory.facts(agent),
         });
       }
 

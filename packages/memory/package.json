@@ -12,7 +12,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "example": "bun run examples/record.ts"
+    "example": "bun run examples/record.ts",
+    "example:loop": "bun run examples/loop.ts"
   },
   "dependencies": {
     "@ariadne/core": "workspace:*"

@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { MemoryStore } from "@ariadne/memory";
-import { approvalPolicy, connectMcpAgents } from "../src/agents";
+import { type FactRow, MemoryStore } from "@ariadne/memory";
+import {
+  agents,
+  approvalPolicy,
+  buildAgentGraph,
+  composeSystem,
+  connectMcpAgents,
+} from "../src/agents";
 import { examples } from "../src/examples";
 import { createStudio } from "../src/studio";
 
@@ -856,7 +862,7 @@ describe("메모리 기록 — 겪은 일과 가치 신호 (F4.1)", () => {
   it("스토어를 안 주면 /api/memory는 비어 있고 아무것도 안 쌓인다", async () => {
     const res = await studio.fetch(new Request("http://x/api/memory"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ episodes: [], events: [] });
+    expect(await res.json()).toEqual({ episodes: [], events: [], facts: [] });
   });
 
   it("approvalPolicy는 게이트를 촉발한 이름만 기록한다 — 묶음 승격이 집계를 오염시키지 않는다", async () => {
@@ -897,7 +903,7 @@ describe("메모리 기록 — 겪은 일과 가치 신호 (F4.1)", () => {
     const withMemory = createStudio(examples, memory);
 
     const res = await withMemory.fetch(new Request("http://x/api/memory?agent=assistant"));
-    expect(await res.json()).toEqual({ episodes: [], events: [] });
+    expect(await res.json()).toEqual({ episodes: [], events: [], facts: [] });
 
     // 모델이 없어도(자격증명 없음) 에피소드는 열리고 **finally가 닫는다** —
     // 실패한 run이 running으로 남으면 관찰이 거짓말이 된다.
@@ -917,7 +923,9 @@ describe("메모리 기록 — 겪은 일과 가치 신호 (F4.1)", () => {
     expect(after.episodes[0]?.ended_at).not.toBeNull();
     expect(after.episodes[0]?.input_count).toBe(1);
     memory.close();
-  });
+    // claude CLI가 있으면 진짜 모델을 부르므로 기본 5초로는 모자란다. 성공하든 던지든
+    // **어느 쪽이든 finally가 닫는다**는 게 이 테스트가 지키는 것이라 둘 다 통과해야 한다.
+  }, 120_000);
 });
 
 // 진짜 모델로 **거부가 가치 채널에 남는지**. 구독 자격증명만 쓰고 API 키는 안 쓴다.
@@ -968,4 +976,77 @@ describe.skipIf(!hasCli)("메모리 기록 → 진짜 모델 (구독 자격증�
     expect(mem.events.map((e) => [e.kind, e.target])).toEqual([["deny", "write_note"]]);
     memory.close();
   }, 180_000);
+});
+
+// 기억한 사실이 **프롬프트로 흘러가는가** (F4.2).
+// 핵심은 `createAgent`도 core도 안 고쳤다는 것이다 — 이미 열려 있던 system 경로를 썼을 뿐이다.
+describe("메모리 주입 — 사실이 system으로 간다 (F4.2)", () => {
+  const fact = (over: Partial<FactRow> = {}): FactRow => ({
+    id: 1,
+    agent: "fs",
+    text: "사용자는 write_file이(가) 확인 없이 실행되는 것을 원하지 않는다.",
+    target: "write_file",
+    level: "preference",
+    origin: "deny 2 / allow 0",
+    created_at: 1,
+    ...over,
+  });
+
+  it("사실이 없으면 system이 **그대로**다 — 빈 블록을 안 붙인다", () => {
+    expect(composeSystem("너는 비서다.", [])).toBe("너는 비서다.");
+    expect(composeSystem(undefined, [])).toBeUndefined();
+  });
+
+  it("사실을 **맨 뒤에** 붙인다 — 사용자 지시 뒤에 와야 덜 묻힌다", () => {
+    const out = composeSystem("너는 비서다.", [fact()]);
+    expect(out?.startsWith("너는 비서다.")).toBe(true);
+    expect(out).toContain("[기억한 것]");
+    expect(out).toContain("확인 없이 실행되는 것을 원하지 않는다");
+  });
+
+  it("system이 없어도 사실만으로 붙는다", () => {
+    expect(composeSystem(undefined, [fact()])).toContain("[기억한 것]");
+  });
+
+  it("여러 사실은 줄 단위로 나열된다", () => {
+    const out = composeSystem("base", [fact(), fact({ id: 2, text: "두 번째." })]);
+    expect(out?.split("\n").filter((l) => l.startsWith("- ")).length).toBe(2);
+  });
+
+  it("사실을 줘도 **그래프 모양은 안 바뀐다** — 주입은 실행 개념이 아니라 문자열이다", () => {
+    const plain = buildAgentGraph(agents[0] as never, true).getGraph();
+    const withFact = buildAgentGraph(agents[0] as never, true, undefined, undefined, [
+      fact({ agent: "calculator" }),
+    ]).getGraph();
+    expect(withFact).toEqual(plain);
+  });
+
+  it("공고화는 거부 2회부터 — 그 전엔 주입할 게 없다", () => {
+    const memory = MemoryStore.open();
+    const ep = memory.beginEpisode("fs", []);
+    memory.recordValueEvent(ep, "fs", "deny", ["write_file"]);
+    expect(memory.consolidate("fs")).toBe(0);
+
+    memory.recordValueEvent(ep, "fs", "deny", ["write_file"]);
+    expect(memory.consolidate("fs")).toBe(3);
+    // 스튜디오가 주입하는 건 그중 선호형 하나뿐이다(선택 기계는 아직 없다).
+    expect(memory.facts("fs").filter((f) => f.level === "preference").length).toBe(1);
+    memory.close();
+  });
+
+  it("GET /api/memory?agent= 는 사실도 준다", async () => {
+    const memory = MemoryStore.open();
+    const s = createStudio(examples, memory);
+    const ep = memory.beginEpisode("mcp", []);
+    memory.recordValueEvent(ep, "mcp", "deny", ["write_note"]);
+    memory.recordValueEvent(ep, "mcp", "deny", ["write_note"]);
+    memory.consolidate("mcp");
+
+    const body = (await (await s.fetch(new Request("http://x/api/memory?agent=mcp"))).json()) as {
+      facts: Array<{ level: string; target: string }>;
+    };
+    expect(body.facts.map((f) => f.level)).toEqual(["episodic", "preference", "rule"]);
+    expect(body.facts.every((f) => f.target === "write_note")).toBe(true);
+    memory.close();
+  });
 });
