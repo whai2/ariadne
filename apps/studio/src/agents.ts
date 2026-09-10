@@ -19,6 +19,7 @@ import type {
   ToolCall,
 } from "@ariadne/core";
 import { connectStdio, type McpClient, mcpTools, type StdioServerConfig } from "@ariadne/mcp";
+import type { MemoryStore } from "@ariadne/memory";
 import { type ChatModel, model } from "@ariadne/model";
 import { type AnyTool, add, multiply, now } from "@ariadne/tools";
 import { statusOf } from "./chat";
@@ -218,6 +219,19 @@ const previewModel: ChatModel = {
 };
 
 /**
+ * run 도중에 일어난 일을 밖으로 흘리는 훅 (F4.1).
+ *
+ * **왜 스토어를 직접 안 넘기나:** 승인 정책은 `buildAgentGraph` 안에서 태어나는데, 거기까지
+ * `MemoryStore`를 들고 내려가면 인자가 다섯이 되고 그래프 조립 코드가 저장소를 알게 된다.
+ * 훅 하나로 좁히면 **memory를 아는 자리가 `agentTurn` 한 곳으로 갇힌다** — `connectMcpAgents`가
+ * mcp를 아는 유일한 자리였던 것(S11)과 같은 모양이다.
+ */
+export interface TurnHooks {
+  /** 사람이 승인/거부를 실제로 내렸다. `targets`는 게이트를 촉발한 툴 이름들. */
+  onDecision?(kind: "allow" | "deny", targets: readonly string[]): void;
+}
+
+/**
  * 선언(`def.approval`)을 링이 받는 정책 함수로 바꾼다 (F3.3).
  *
  * **`decision`은 대기 중이던 그 묶음에만 쓰고 버린다.** 재개하면 START가 `tools`로 들어가므로
@@ -226,14 +240,26 @@ const previewModel: ChatModel = {
  *
  * 클로저 상태가 요청 사이에 새지 않는 건 `agentTurn`이 **매 턴 그래프를 새로 세우기** 때문이다.
  */
-function approvalPolicy(names: string[], decision?: Approval): ApprovalPolicy {
+export function approvalPolicy(
+  names: string[],
+  decision?: Approval,
+  hooks?: TurnHooks,
+): ApprovalPolicy {
   const gate = askFor(names);
+  const risky = new Set(names);
   let once = decision;
-  return (calls) => {
-    if (once === undefined) return gate(calls);
-    const answer = once;
+  // 정책이 async인 건 계약이 그래서다(`ApprovalPolicy`가 Promise를 허용한다 — 터미널 앱이
+  // 여기서 사람을 기다릴 수 있게 한 F3.3의 설계). 기록은 결정이 확정된 뒤에만 한다.
+  return async (calls) => {
+    // **게이트를 촉발한 이름만** 기록한다. 정책이 묶음 단위라 안전한 툴이 위험한 툴에 딸려
+    // 거부되는데, 그것까지 세면 집계가 오염된다. 무엇을 거를지는 여기만 안다(risky 집합).
+    const targets = calls.map((c) => c.name).filter((n) => risky.has(n));
+
+    const verdict = once ?? (await gate(calls));
     once = undefined;
-    return answer;
+    // `"ask"`는 사람의 결정이 아니라 "물어봤다"는 시스템 상태라 가치 채널에 안 들어간다.
+    if (verdict !== "ask") hooks?.onDecision?.(verdict, targets);
+    return verdict;
   };
 }
 
@@ -248,6 +274,7 @@ export function buildAgentGraph(
   def: AgentDef,
   preview = false,
   decision?: Approval,
+  hooks?: TurnHooks,
 ): CompiledGraph<MessagesState> {
   const chatModel = preview
     ? previewModel
@@ -260,7 +287,7 @@ export function buildAgentGraph(
     tools: def.tools,
     ...(def.system === undefined ? {} : { system: def.system }),
     ...(def.maxToolRounds === undefined ? {} : { maxToolRounds: def.maxToolRounds }),
-    ...(gated ? { approval: approvalPolicy(def.approval ?? [], decision) } : {}),
+    ...(gated ? { approval: approvalPolicy(def.approval ?? [], decision, hooks) } : {}),
   });
 }
 
@@ -288,12 +315,33 @@ export async function agentTurn(
   def: AgentDef,
   history: BaseMessage[],
   decision?: Approval,
+  memory?: MemoryStore,
 ): Promise<AgentReply> {
-  const graph = buildAgentGraph(def, false, decision);
+  // 에피소드를 **먼저** 연다 — 승인 게이트가 run *도중에* 이 id로 가치 이벤트를 써야 한다.
+  const episode = memory?.beginEpisode(def.id, history);
+  const hooks: TurnHooks | undefined =
+    memory === undefined || episode === undefined
+      ? undefined
+      : { onDecision: (kind, targets) => memory.recordValueEvent(episode, def.id, kind, targets) };
+
+  const graph = buildAgentGraph(def, false, decision, hooks);
   const steps: StepUpdate<MessagesState>[] = [];
-  for await (const step of graph.stream({ messages: history })) {
-    steps.push(step);
+  let produced: BaseMessage[] = [];
+  let pending: ToolCall[] = [];
+  try {
+    for await (const step of graph.stream({ messages: history })) {
+      steps.push(step);
+    }
+    const final = steps.at(-1)?.state.messages ?? history;
+    produced = final.slice(history.length);
+    pending = pendingToolCalls(final);
+    return { messages: produced, steps, pending };
+  } finally {
+    // **던져도 닫는다.** 안 그러면 실패한 run이 전부 `running`으로 남아 관찰이 거짓말이 된다.
+    // 던진 경우 `produced`는 비고 `pending`도 비어 `completed`로 닫히는데, 그건 `ended_at`이
+    // 붙었다는 뜻일 뿐이다 — 무엇이 잘못됐는지는 에러가 이미 호출자에게 갔다.
+    if (memory !== undefined && episode !== undefined) {
+      memory.endEpisode(episode, produced, pending.length > 0 ? "paused" : "completed");
+    }
   }
-  const final = steps.at(-1)?.state.messages ?? history;
-  return { messages: final.slice(history.length), steps, pending: pendingToolCalls(final) };
 }

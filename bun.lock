@@ -18,6 +18,7 @@
         "@ariadne/agent": "workspace:*",
         "@ariadne/core": "workspace:*",
         "@ariadne/mcp": "workspace:*",
+        "@ariadne/memory": "workspace:*",
         "@ariadne/model": "workspace:*",
         "@ariadne/tools": "workspace:*",
         "mermaid": "^11.6.0",
@@ -62,6 +63,13 @@
         "@ariadne/model": "workspace:*",
       },
     },
+    "packages/memory": {
+      "name": "@ariadne/memory",
+      "version": "0.0.0",
+      "dependencies": {
+        "@ariadne/core": "workspace:*",
+      },
+    },
     "packages/model": {
       "name": "@ariadne/model",
       "version": "0.0.0",
@@ -90,6 +98,8 @@
     "@ariadne/core": ["@ariadne/core@workspace:packages/core"],
 
     "@ariadne/mcp": ["@ariadne/mcp@workspace:packages/mcp"],
+
+    "@ariadne/memory": ["@ariadne/memory@workspace:packages/memory"],
 
     "@ariadne/model": ["@ariadne/model@workspace:packages/model"],
 

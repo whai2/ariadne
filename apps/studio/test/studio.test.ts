@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { connectMcpAgents } from "../src/agents";
+import { MemoryStore } from "@ariadne/memory";
+import { approvalPolicy, connectMcpAgents } from "../src/agents";
 import { examples } from "../src/examples";
 import { createStudio } from "../src/studio";
 
@@ -846,4 +847,125 @@ describe.skipIf(!hasCli)("승인 게이트 → 진짜 모델로 멈춤·재개 (
     expect(results[0]?.status).toBe("error");
     expect(denied.pending).toEqual([]);
   }, 120_000);
+});
+
+// 메모리 기록이 스튜디오 계약으로 드러나는가 (F4.1).
+// **동작은 하나도 안 바뀐다** — 위 52개 테스트가 스토어 없이 그대로 통과하는 게 그 증거다.
+// 여기선 스토어를 준 스튜디오를 따로 세워 "무엇이 쌓이나"만 본다.
+describe("메모리 기록 — 겪은 일과 가치 신호 (F4.1)", () => {
+  it("스토어를 안 주면 /api/memory는 비어 있고 아무것도 안 쌓인다", async () => {
+    const res = await studio.fetch(new Request("http://x/api/memory"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ episodes: [], events: [] });
+  });
+
+  it("approvalPolicy는 게이트를 촉발한 이름만 기록한다 — 묶음 승격이 집계를 오염시키지 않는다", async () => {
+    const seen: Array<[string, string[]]> = [];
+    const policy = approvalPolicy(["write_note"], undefined, {
+      onDecision: (kind, targets) => seen.push([kind, [...targets]]),
+    });
+
+    // 안전한 툴만 부른 묶음 → 통과하고, 기록엔 위험한 이름이 없다(빈 배열).
+    expect(await policy([{ id: "c1", name: "get_weather", args: {} }])).toBe("allow");
+    expect(seen).toEqual([["allow", []]]);
+
+    // 위험한 툴이 끼면 "ask"다 — **사람의 결정이 아니라 시스템 상태라 기록하지 않는다.**
+    expect(
+      await policy([
+        { id: "c2", name: "get_weather", args: {} },
+        { id: "c3", name: "write_note", args: {} },
+      ]),
+    ).toBe("ask");
+    expect(seen.length).toBe(1);
+  });
+
+  it("재개 결정은 그 묶음의 위험한 이름과 함께 기록된다", async () => {
+    const seen: Array<[string, string[]]> = [];
+    const policy = approvalPolicy(["write_note"], "deny", {
+      onDecision: (kind, targets) => seen.push([kind, [...targets]]),
+    });
+    expect(await policy([{ id: "c1", name: "write_note", args: { title: "x" } }])).toBe("deny");
+    expect(seen).toEqual([["deny", ["write_note"]]]);
+
+    // 한 번 쓰고 버린다(F3.3) — 같은 run의 다음 묶음은 다시 게이트로 간다.
+    expect(await policy([{ id: "c2", name: "write_note", args: {} }])).toBe("ask");
+    expect(seen.length).toBe(1);
+  });
+
+  it("agentTurn이 에피소드를 열고 닫는다 — 툴 없는 에이전트로 모델 없이도 계약이 보인다", async () => {
+    const memory = MemoryStore.open(":memory:", { now: () => 7 });
+    const withMemory = createStudio(examples, memory);
+
+    const res = await withMemory.fetch(new Request("http://x/api/memory?agent=assistant"));
+    expect(await res.json()).toEqual({ episodes: [], events: [] });
+
+    // 모델이 없어도(자격증명 없음) 에피소드는 열리고 **finally가 닫는다** —
+    // 실패한 run이 running으로 남으면 관찰이 거짓말이 된다.
+    await withMemory.fetch(
+      new Request("http://x/api/agents/chat", {
+        method: "POST",
+        body: JSON.stringify({ id: "assistant", messages: [{ role: "human", content: "안녕" }] }),
+      }),
+    );
+    const after = (await (
+      await withMemory.fetch(new Request("http://x/api/memory?agent=assistant"))
+    ).json()) as {
+      episodes: Array<{ status: string; ended_at: number | null; input_count: number }>;
+    };
+
+    expect(after.episodes.length).toBe(1);
+    expect(after.episodes[0]?.ended_at).not.toBeNull();
+    expect(after.episodes[0]?.input_count).toBe(1);
+    memory.close();
+  });
+});
+
+// 진짜 모델로 **거부가 가치 채널에 남는지**. 구독 자격증명만 쓰고 API 키는 안 쓴다.
+describe.skipIf(!hasCli)("메모리 기록 → 진짜 모델 (구독 자격증명)", () => {
+  let closeMcp: () => Promise<void>;
+
+  beforeAll(async () => {
+    closeMcp = await connectMcpAgents();
+  });
+  afterAll(async () => {
+    await closeMcp();
+  });
+
+  it("멈춤과 재개가 **에피소드 두 행**으로 남고 그 사이에 deny가 하나 낀다", async () => {
+    const memory = MemoryStore.open();
+    const s = createStudio(examples, memory);
+    const turn = (messages: unknown[], decision?: string) =>
+      s.fetch(
+        new Request("http://x/api/agents/chat", {
+          method: "POST",
+          body: JSON.stringify({ id: "mcp", messages, decision }),
+        }),
+      );
+
+    const first = [{ role: "human", content: "'회의'라는 제목으로 '3시'라고 메모 저장해줘" }];
+    const paused = (await (await turn(first)).json()) as {
+      messages: unknown[];
+      pending: Array<{ name: string }>;
+    };
+    expect(paused.pending.map((c) => c.name)).toEqual(["write_note"]);
+
+    // 멈춘 턴: paused로 닫혔고, 아직 사람이 아무것도 안 골라서 가치 이벤트가 없다.
+    let mem = (await (await s.fetch(new Request("http://x/api/memory?agent=mcp"))).json()) as {
+      episodes: Array<{ status: string }>;
+      events: Array<{ kind: string; target: string }>;
+    };
+    expect(mem.episodes.map((e) => e.status)).toEqual(["paused"]);
+    expect(mem.events).toEqual([]);
+
+    // 거부로 재개 — **새 에피소드**가 되고, 그 안에서 사람의 결정이 기록된다.
+    await turn([...first, ...paused.messages], "deny");
+    mem = (await (
+      await s.fetch(new Request("http://x/api/memory?agent=mcp"))
+    ).json()) as typeof mem;
+
+    expect(mem.episodes.length).toBe(2); // 서버는 두 run을 잇지 않는다
+    expect(mem.episodes[0]?.status).toBe("completed"); // 최신순 — 재개 턴은 끝까지 갔다
+    expect(mem.events.map((e) => [e.kind, e.target])).toEqual([["deny", "write_note"]]);
+    memory.close();
+  }, 180_000);
 });

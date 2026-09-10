@@ -10,3 +10,6 @@ dist/
 .claude/
 
 # bun.lock 은 커밋한다 (의도적으로 무시하지 않음)
+
+# 스튜디오가 쌓는 메모리 DB (F4.1) — 로컬 관찰용이라 커밋하지 않는다
+apps/studio/.ariadne/

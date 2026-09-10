@@ -1,4 +1,5 @@
 import type { BaseMessage, CompiledGraph, StepUpdate } from "@ariadne/core";
+import type { MemoryStore } from "@ariadne/memory";
 import { agentInfo, agents, agentTurn, buildAgentGraph } from "./agents";
 import { buildChatGraph, chatTurn, providerList, SHAPES, type ShapeId } from "./chat";
 import type { Example } from "./examples";
@@ -60,6 +61,7 @@ export interface Studio {
  * - POST /api/chat       → { spec, messages, system, shape } 한 턴 대화 (그래프로 돈다)
  * - GET  /api/agents     → 등록된 에이전트 목록(설정 + 준비 상태)
  * - GET  /api/agents/graph?id → 그 에이전트의 그래프 구조(자격증명 없이)
+ * - GET  /api/memory?agent= → 쌓인 에피소드와 가치 이벤트 (F4.1). 스토어가 없으면 빈 배열.
  * - POST /api/agents/chat → { id, messages, decision? } 그 에이전트로 한 턴.
  *                           `decision`("allow"|"deny")은 승인 대기에서 **재개**할 때만 (F3.3).
  *                           재개에 새 엔드포인트가 없는 게 요점이다 — 상태가 messages뿐이라
@@ -68,7 +70,7 @@ export interface Studio {
  * - GET  /api/graph?id   → 그 예제의 구조(getGraph)
  * - POST /api/run        → { id, input }으로 stream을 돌려 스텝별 상태/채널 반환
  */
-export function createStudio(examples: Example[]): Studio {
+export function createStudio(examples: Example[], memory?: MemoryStore): Studio {
   const byId = new Map(examples.map((e) => [e.id, e]));
   const first = examples[0];
   const agentById = new Map(agents.map((a) => [a.id, a]));
@@ -134,6 +136,17 @@ export function createStudio(examples: Example[]): Studio {
         }
       }
 
+      if (req.method === "GET" && url.pathname === "/api/memory") {
+        // **스토어가 없으면 조용히 빈 배열이다.** 테스트와 일회성 실행이 파일을 안 만들게
+        // 스튜디오는 메모리 없이도 그대로 돈다 — 기존 52개 테스트가 그 증거다.
+        if (memory === undefined) return Response.json({ episodes: [], events: [] });
+        const agent = url.searchParams.get("agent") ?? undefined;
+        return Response.json({
+          episodes: memory.episodes(agent),
+          events: memory.valueEvents(agent),
+        });
+      }
+
       if (req.method === "GET" && url.pathname === "/api/agents") {
         return Response.json(agents.map((a) => agentInfo(a)));
       }
@@ -168,7 +181,7 @@ export function createStudio(examples: Example[]): Studio {
         }
         try {
           // 모델 생성 실패(키 없음)와 호출 실패를 같은 자리에서 — 둘 다 사용자가 고칠 수 있다.
-          return Response.json(await agentTurn(def, body.messages, body.decision));
+          return Response.json(await agentTurn(def, body.messages, body.decision, memory));
         } catch (e) {
           return Response.json({ error: describe(e) }, { status: 500 });
         }
