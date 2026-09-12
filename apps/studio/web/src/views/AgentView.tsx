@@ -3,12 +3,15 @@ import {
   type AgentInfo,
   api,
   type GraphView,
+  type Injected,
+  type MemoryView,
   type Message,
   type StepUpdate,
   type ToolCall,
 } from "../api";
 import { ChatLog, Composer } from "../components/Chat";
 import { Graph } from "../components/Graph";
+import { Memory, OUTCOME } from "../components/Memory";
 import { Steps } from "../components/Steps";
 
 function Chip({
@@ -75,6 +78,30 @@ function ApprovalPanel({
   );
 }
 
+/**
+ * 이번 턴에 시험된 기억 하나 (S13).
+ *
+ * **주입은 원래 안 보인다** — 사실이 `system`에 접혀 들어가 모델만 본다. 그래서 3턴째에 행동이
+ * 바뀌어도 화면에는 **원인 없이** 나타난다. 이 띠가 그 원인을 대화 바로 옆에 놓는다.
+ */
+function InjectedBanner({ injected }: { injected: Injected }) {
+  const verdict = injected.outcome === null ? null : OUTCOME[injected.outcome];
+  return (
+    <div className="mb-2.5 rounded-md border border-aimsg/40 bg-aimsg/10 p-2.5">
+      <div className="font-semibold text-aimsg text-xs">🧠 이번 턴에 주입된 기억</div>
+      <p className="mt-1 text-fg text-xs">{injected.fact.text}</p>
+      {/* 숫자가 **주입 직전**의 성적인 게 중요하다 — 아래 표는 이번 시행까지 반영돼 한 칸 앞서 있다.
+          이 턴의 기여분이 바로 아래 `판정` 줄이다. */}
+      <p className="mt-1 font-mono text-faint text-xs">
+        {injected.fact.level} · {injected.fact.target} · {injected.fact.origin} · 주입 전 성적{" "}
+        {injected.fact.strength > 0 ? `+${injected.fact.strength}` : injected.fact.strength} (
+        {injected.fact.trials}회 시행)
+      </p>
+      {verdict ? <p className={`mt-1 text-xs ${verdict.cls}`}>판정: {verdict.label}</p> : null}
+    </div>
+  );
+}
+
 export function AgentView({ agent }: { agent: AgentInfo }) {
   const [graph, setGraph] = useState<GraphView | { error: string } | null>(null);
   const [convo, setConvo] = useState<Message[]>([]);
@@ -82,6 +109,8 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
   const [awaiting, setAwaiting] = useState<ToolCall[]>([]);
   const [steps, setSteps] = useState<StepUpdate[]>([]);
   const [error, setError] = useState("");
+  const [memory, setMemory] = useState<MemoryView | null>(null);
+  const [injected, setInjected] = useState<Injected>();
 
   useEffect(() => {
     setConvo([]);
@@ -89,7 +118,10 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setAwaiting([]);
     setError("");
     setGraph(null);
+    setMemory(null);
+    setInjected(undefined);
     api.agentGraph(agent.id).then(setGraph);
+    api.memory(agent.id).then(setMemory);
   }, [agent.id]);
 
   async function turn(history: Message[], decision?: "allow" | "deny") {
@@ -98,8 +130,11 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setAwaiting([]);
     setError("");
     setSteps([]);
+    setInjected(undefined);
     const res = await api.agentChat(agent.id, history, decision);
     setPending(false);
+    // 턴이 실패해도 다시 읽는다 — 에피소드는 `finally`에서 닫히므로 실패한 run도 행으로 남는다.
+    api.memory(agent.id).then(setMemory);
     if (res.error) {
       setError(res.error);
       return;
@@ -107,6 +142,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setConvo(history.concat(res.messages));
     setSteps(res.steps);
     setAwaiting(res.pending ?? []);
+    setInjected(res.injected);
   }
 
   const send = (text: string) => turn([...convo, { role: "human", content: text }]);
@@ -170,6 +206,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
 
         <section className="rounded-lg border border-border bg-surface p-4">
           <h2 className="mb-3 font-semibold text-muted text-xs uppercase tracking-wide">Chat</h2>
+          {injected ? <InjectedBanner injected={injected} /> : null}
           <ChatLog messages={convo} pending={pending} empty="메시지를 보내면 대화가 시작된다." />
           {awaiting.length > 0 ? (
             <ApprovalPanel calls={awaiting} busy={pending} onDecide={decide} />
@@ -188,6 +225,17 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
           이번 턴에 엔진이 한 일
         </h2>
         <Steps steps={steps} />
+      </section>
+
+      <section className="mt-4 rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-1 font-semibold text-muted text-xs uppercase tracking-wide">
+          이 에이전트가 기억한 것
+        </h2>
+        <p className="mb-3 text-faint text-xs">
+          승인/거부가 쌓여 문장이 되고, 그 문장이 다음 턴의 <b>system</b>으로 간다. 격리 키는
+          에이전트 하나 — <b>사용자 축이 없다</b>(세션이 들어오면 먼저 깨질 자리).
+        </p>
+        <Memory view={memory} injectedId={injected?.fact.id} />
       </section>
     </div>
   );

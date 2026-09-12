@@ -13,7 +13,13 @@ import type {
   ToolCall,
 } from "@ariadne/core";
 import { connectStdio, type McpClient, mcpTools, type StdioServerConfig } from "@ariadne/mcp";
-import { chooseFact, judge, type MemoryStore, type ScoredFact } from "@ariadne/memory";
+import {
+  chooseFact,
+  type InjectionOutcome,
+  judge,
+  type MemoryStore,
+  type ScoredFact,
+} from "@ariadne/memory";
 import { type ChatModel, model } from "@ariadne/model";
 import type { AnyTool } from "@ariadne/tools";
 import { statusOf } from "./providers";
@@ -184,10 +190,26 @@ export function buildAgentGraph(
   });
 }
 
+/**
+ * 이번 턴에 시험한 기억 하나 (S13).
+ *
+ * **이게 없으면 주입은 관찰이 안 된다.** 사실은 `system`에 접혀 들어가 모델만 보고,
+ * `/api/memory`는 "쌓인 것"을 보여줄 뿐 *이번 턴에 어느 것을 썼는지*는 말하지 않는다.
+ * 그 사실은 `injections` 행에만 남는데 그걸 에피소드로 되짚는 조회가 없다 —
+ * 그래서 **응답에 싣는다**(S12의 `pending`과 같은 모양: 안쪽에선 상태, 경계 밖에선 필드).
+ */
+export interface Injected {
+  fact: ScoredFact;
+  /** 이 턴의 판정. run이 깨져 판정 못 했으면 `null`. */
+  outcome: InjectionOutcome | null;
+}
+
 export interface AgentReply {
   messages: BaseMessage[];
   steps: StepUpdate<MessagesState>[];
   pending: ToolCall[];
+  /** 사실이 없으면 **키 자체가 없다**(F2.1의 규칙 — 비면 안 싣는다). */
+  injected?: Injected;
 }
 
 export async function agentTurn(
@@ -213,7 +235,9 @@ export async function agentTurn(
   const steps: StepUpdate<MessagesState>[] = [];
   let produced: BaseMessage[] = [];
   let pending: ToolCall[] = [];
-  let finished = false;
+  // run이 깨지면 undefined로 남는다 — 그게 "판정 못 했다"의 표현이고, DB에도 응답에도 같은 뜻이다.
+  // (예전엔 `finished` 플래그로 갈랐는데, 판정을 성공 경로에서 미리 내니 그 플래그가 필요 없어졌다.)
+  let outcome: InjectionOutcome | undefined;
   try {
     for await (const step of graph.stream({ messages: history })) {
       steps.push(step);
@@ -221,14 +245,19 @@ export async function agentTurn(
     const final = steps.at(-1)?.state.messages ?? history;
     produced = final.slice(history.length);
     pending = pendingToolCalls(final);
-    finished = true;
-    return { messages: produced, steps, pending };
+    if (fact !== undefined) outcome = judge(fact.target, produced, pending);
+    return {
+      messages: produced,
+      steps,
+      pending,
+      ...(fact === undefined ? {} : { injected: { fact, outcome: outcome ?? null } }),
+    };
   } finally {
     if (memory !== undefined && episode !== undefined) {
       memory.endEpisode(episode, produced, pending.length > 0 ? "paused" : "completed");
     }
-    if (memory !== undefined && injection !== undefined && fact !== undefined) {
-      memory.endInjection(injection, finished ? judge(fact.target, produced, pending) : undefined);
+    if (memory !== undefined && injection !== undefined) {
+      memory.endInjection(injection, outcome);
     }
   }
 }

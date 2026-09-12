@@ -85,7 +85,8 @@ main.tsx
       └ views/AgentView.tsx        ← turn() = send · decide
             ├ components/Chat.tsx     ChatLog · Composer
             ├ components/Graph.tsx    (+ theme, mermaid)
-            └ components/Steps.tsx
+            ├ components/Steps.tsx
+            └ components/Memory.tsx   facts · value_events · episodes
                   │
                   ▼
               api.ts               ← 유일한 서버 접점이자 타입 원본
@@ -135,6 +136,11 @@ main.tsx
 **대가 둘:** 학습이 에이전트 간에 안 넘어가고(`mcp`의 `write_note` 학습이 `filesystem`에 안 간다),
 **사용자 축이 없다**(여러 사람이 쓰면 A의 거부가 B의 프롬프트에 실린다). 후자는 세션이 들어오면
 (F4.4) 먼저 깨지는 자리다.
+
+이 넷이 화면에 올라오는 길도 둘이다(S13). **누적**은 `GET /api/memory`를 `Memory.tsx`가 세 블록으로
+그리고, **이번 턴에 시험한 사실 하나**는 `AgentReply.injected`로 응답에 실려 대화 바로 위에 뜬다.
+후자를 조회로 못 얻는 건 `injections` 행을 에피소드로 되짚는 경로가 없어서고, 만들지 않은 건
+클라이언트가 묻는 게 *방금 자기가 부른 턴*이기 때문이다 — `pending`이 그랬던 것과 같은 이유다.
 
 ## 흐름 하나 — 승인 게이트가 걸린 턴
 

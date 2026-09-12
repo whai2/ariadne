@@ -564,3 +564,70 @@ describe("선택 기계 — 쓰이는 것이 남는다 (F4.3)", () => {
     memory.close();
   });
 });
+
+// 쌓인 기억을 화면이 읽을 수 있는가 (S13).
+// **관찰의 구멍이 하나 있었다** — 사실이 system에 접혀 들어가 모델만 보므로, 3턴째에 행동이
+// 바뀌어도 화면에는 원인 없이 나타났다. `/api/memory`는 "쌓인 것"을 줄 뿐 *이번 턴에 어느 것을
+// 썼는지*는 말하지 않는다. 그래서 응답에 `injected`를 싣는다(S12의 `pending`과 같은 모양).
+describe("메모리 뷰 — 주입이 관찰된다 (S13)", () => {
+  function seeded() {
+    const memory = MemoryStore.open();
+    const ep = memory.beginEpisode("mcp", []);
+    memory.recordValueEvent(ep, "mcp", "deny", ["write_note"]);
+    memory.recordValueEvent(ep, "mcp", "deny", ["write_note"]);
+    memory.consolidate("mcp");
+    return memory;
+  }
+
+  async function turn(s: ReturnType<typeof createStudio>, text: string) {
+    const res = await s.fetch(
+      new Request("http://x/api/agents/chat", {
+        method: "POST",
+        body: JSON.stringify({ id: "mcp", messages: [{ role: "human", content: text }] }),
+      }),
+    );
+    return (await res.json()) as {
+      injected?: { fact: ScoredFact; outcome: string | null };
+      error?: string;
+    };
+  }
+
+  it.skipIf(!hasCli)(
+    "응답이 **이번 턴에 시험한 사실 하나**를 싣는다 — 그게 화면이 원인을 말할 유일한 근거다",
+    async () => {
+      const memory = seeded();
+      const s = createStudio(memory);
+      const body = await turn(s, "안녕");
+      expect(body.error).toBeUndefined();
+      expect(body.injected).toBeDefined();
+
+      // 고른 것이 실제로 이 에이전트의 사실 중 하나이고, 판정이 DB와 **같은 값**이다.
+      const facts = memory.scoredFacts("mcp");
+      const fact = body.injected?.fact as ScoredFact;
+      expect(facts.map((f) => f.id)).toContain(fact.id);
+      expect(facts.find((f) => f.id === fact.id)?.trials).toBe(1);
+      // 판정이 났으면 시행이 하나 늘었고, 응답의 outcome이 그 시행의 결과다.
+      expect(["reinforce", "decay", "neutral"]).toContain(body.injected?.outcome as string);
+      memory.close();
+    },
+    120_000,
+  );
+
+  it.skipIf(!hasCli)(
+    "사실이 없으면 `injected` 키가 **아예 없다** — 비면 안 싣는다(F2.1의 규칙)",
+    async () => {
+      const memory = MemoryStore.open();
+      const s = createStudio(memory);
+      const body = await turn(s, "안녕");
+      expect(body.error).toBeUndefined();
+      expect("injected" in body).toBe(false);
+      memory.close();
+    },
+    120_000,
+  );
+
+  it("스토어가 없어도 응답에 injected가 없다 — 메모리 없이도 그냥 돈다는 계약", async () => {
+    const body = await turn(createStudio(), "안녕");
+    expect("injected" in body).toBe(false);
+  }, 120_000);
+});
