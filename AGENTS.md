@@ -8,7 +8,10 @@
 **Ariadne** — TypeScript 올인원 에이전트 프레임워크(Mastra 스타일)를 **바닥부터 재구현**하며 배우는 **학습용 모노레포**. 핵심은 LangGraph 스타일 그래프 엔진이고, 그 위에 프레임워크 링(model/tools/agent/memory)과 비주얼 도구 Studio를 두른다.
 
 - **전체 비전:** [`docs/VISION.md`](docs/VISION.md) — 올인원 프레임워크 · Studio · 3 트랙(Core/Studio/Framework).
-- **Core 트랙(V0~V8) 완료.** 그래프 엔진(`packages/core`, `@ariadne/core`)은 완성됐고 이제 **회귀 안전망**이다. **지금 집중 = Framework 트랙**(`F1~`) — core 위에 링(model/tools/agent/memory)을 두른다. 진행 계획·커밋 단위: [`docs/ROADMAP.md`](docs/ROADMAP.md). 항상 이 문서를 따른다.
+- **Core 트랙(V0~V8) 완료.** 그래프 엔진(`packages/core`, `@ariadne/core`)은 완성됐고 이제 **회귀 안전망**이다.
+- **Framework 트랙(F1~F4.3) 완료.** model · tools · agent · mcp · memory 링이 섰다.
+- **지금 집중 = Ops·Thread 트랙(`F5~F9`)** — 멈춤·재개(F5) → 관측(F6) → 평가(F7) → 워크플로우·서브에이전트(F8) → **아리아드네의 실**(F9). 진행 계획·커밋 단위: [`docs/ROADMAP.md`](docs/ROADMAP.md). 항상 이 문서를 따른다.
+- **도착지는 아리아드네의 실이다.** 범용 에이전트의 성능을 측정하고(evals), 그 궤적에서 반복 구조를 뽑아 그래프로 응고시키고, 같은 자로 다시 재서 "동일 성능"임을 증명한다. **F5~F8은 곁가지가 아니라 그 부품이다** — [`docs/VISION.md`](docs/VISION.md).
 - **모노레포:** Bun workspaces. 엔진=`packages/core`(런타임 deps 0 유지), 링=`packages/*`, Studio=`apps/*`. 루트 스크립트가 `bun run --filter '@ariadne/*'`로 팬아웃.
 - **참조 원본(Python):** `/Users/no-eunsu/coxwave/langgraph/libs/langgraph/langgraph/` — 읽기 전용 참고. **복붙 금지**, 개념을 이해해 우리식으로 재구성한다.
 
@@ -26,7 +29,9 @@
 
 - **개념 중심 재구성** — async 한 벌(sync/async 이중화 안 함), 처음엔 JSON serde, 실제 쓰는 채널/기능만.
 - **`@ariadne/core`는 런타임 의존성 0개.** 메시지 타입도 `@langchain/core` 없이 직접 정의. **LLM/서드파티 SDK는 바깥 링에만** 산다(VISION) — 예: `@ariadne/model`의 `@anthropic-ai/sdk`. core에 deps를 넣지 말 것.
-- **core의 범위: 실행 엔진까지** (채널 → Pregel 루프 → 동작하는 StateGraph). 영속성/인터럽트/스트리밍/함수형 API는 core 범위 밖 — 필요해지면 링에서 다룬다(영속성은 `F4 memory`).
+- **core의 범위: 실행 엔진까지** (채널 → Pregel 루프 → 동작하는 StateGraph). 스트리밍/함수형 API는 core 범위 밖.
+- **영속성의 선 (F5에서 다시 그었다):** **채널이 자기 값을 내놓고 되받는 능력은 채널의 성질이라 core** (`BaseChannel.checkpoint()/fromCheckpoint()`), **그 값을 어디에 두는가는 링** (`@ariadne/memory`의 SQLite). 복원은 *쓰기*가 아니라 *세팅*이라 채널 자신만 할 수 있다 — 되돌려 넣으면 `applyWrites`가 리듀서를 다시 태워 `BinaryOperatorAggregate(합)`가 두 배가 된다.
+  - **인터럽트(superstep 한가운데서 멈춤)는 여전히 범위 밖.** 우리 멈춤은 **항상 정지점**이다(트리거 채널이 전부 빈 superstep 경계). 그래서 langgraph의 `pending_writes`·`versions_seen`·`checkpoint_ns` 대부분을 안 만든다.
 
 ## 아키텍처 불변식 (깨지 말 것)
 
