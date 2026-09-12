@@ -28,12 +28,6 @@ function Chip({
   return <span className={`rounded-full px-2.5 py-1 font-mono text-xs ${cls}`}>{children}</span>;
 }
 
-/**
- * 승인 대기 패널 (F3.3). **여기가 사람이 루프 사이에 서는 자리다.**
- *
- * 승인/거부 둘 다 `agentChat`을 다시 부를 뿐이다 — 재개에 새 엔드포인트도 세션 id도 없는 건
- * 이 에이전트의 상태가 전부 `messages`이고 그걸 이 컴포넌트가 쥐고 있어서다.
- */
 function ApprovalPanel({
   calls,
   busy,
@@ -81,7 +75,6 @@ function ApprovalPanel({
   );
 }
 
-/** 등록된 에이전트 하나의 상세 — 설정 요약(칩) + 그래프 + 대화 + 스텝. Mastra 에이전트 페이지 대응. */
 export function AgentView({ agent }: { agent: AgentInfo }) {
   const [graph, setGraph] = useState<GraphView | { error: string } | null>(null);
   const [convo, setConvo] = useState<Message[]>([]);
@@ -90,7 +83,6 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
   const [steps, setSteps] = useState<StepUpdate[]>([]);
   const [error, setError] = useState("");
 
-  // 에이전트를 바꾸면 대화·스텝·그래프를 새로 — 이전 에이전트의 상태가 새지 않게.
   useEffect(() => {
     setConvo([]);
     setSteps([]);
@@ -100,10 +92,6 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     api.agentGraph(agent.id).then(setGraph);
   }, [agent.id]);
 
-  /**
-   * 한 번의 왕복. **보내기와 재개가 같은 함수다** — 다른 건 `decision` 한 글자뿐이고,
-   * 그게 F3.3이 "재개 = 같은 이력으로 새 run"이라고 말한 것의 UI 쪽 모습이다.
-   */
   async function turn(history: Message[], decision?: "allow" | "deny") {
     setConvo(history);
     setPending(true);
@@ -118,7 +106,6 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     }
     setConvo(history.concat(res.messages));
     setSteps(res.steps);
-    // 멈췄으면 새 메시지가 0개라, 이 필드가 없으면 빈 응답과 구별이 안 된다.
     setAwaiting(res.pending ?? []);
   }
 
@@ -135,7 +122,6 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
           {agent.mcpServer ? <Chip kind="warn">🛰 MCP: {agent.mcpServer}</Chip> : null}
           {agent.tools.length ? (
             agent.tools.map((t) =>
-              // 승인이 걸린 툴은 색부터 다르다 — 어느 툴이 사람을 부르는지 부르기 전에 보인다.
               agent.approval?.includes(t) ? (
                 <Chip key={t} kind="warn">
                   🔒 {t}

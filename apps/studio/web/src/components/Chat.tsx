@@ -7,10 +7,8 @@ const ROLE_COLOR: Record<string, string> = {
   tool: "text-tool",
 };
 
-/** 메시지 한 개. 툴을 부르는 ai 메시지는 content가 비어 toolCalls를 안 그리면 빈 말풍선이 된다. */
 function Bubble({ m }: { m: Message }) {
   const err = m.status === "error";
-  // 툴 결과는 어느 호출의 답인지가 전부다 — id를 라벨에 박아 짝을 눈으로 확인한다.
   const who = m.role + (m.toolCallId ? ` → #${m.toolCallId}` : "");
   return (
     <div className="mb-3">
@@ -83,8 +81,7 @@ export function Composer({
     onSend(t);
   }
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // **IME 조합 중 Enter는 무시한다.** 한글 입력에서 확정 Enter가 전송까지 트리거하면
-    // 확정 전 텍스트가 먼저 나가고 남은 조합 글자가 두 번째 메시지로 새어 나간다.
+    // IME 조합 중 Enter는 무시한다(한글 입력에서 확정 Enter가 전송까지 트리거하는 것 방지).
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

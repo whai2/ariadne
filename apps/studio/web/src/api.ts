@@ -1,6 +1,3 @@
-// 서버 API 래퍼 + UI-로컬 타입. **서버 코드를 import하지 않는다** — UI는 브라우저에서 돌고
-// 서버는 Bun에서 돈다. 응답 모양만 여기 다시 적는다(경계에서 타입을 지운 값).
-
 export interface Message {
   role: "human" | "ai" | "system" | "tool";
   content: string;
@@ -38,55 +35,22 @@ export interface AgentInfo {
   system?: string;
   maxToolRounds?: number;
   toolsNative: boolean;
-  /** 툴이 온 MCP 서버 이름(있으면). 툴이 외부 서버에서 왔음을 표시한다. */
   mcpServer?: string;
-  /** MCP 서버 연결이 실패했다면 그 이유(있으면). */
   mcpError?: string;
-  /** 사람의 승인이 있어야 도는 툴 이름들 (F3.3). 툴 칩에 자물쇠를 단다. */
   approval?: string[];
   ready: boolean;
   need: string;
 }
 
-/** 모델이 요청한 툴 호출 하나. 승인 패널이 이걸 그대로 보여준다. */
 export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
 }
 
-export interface ProviderInfo {
-  id: string;
-  name: string;
-  format: string;
-  ready: boolean;
-  need: string;
-  tools: boolean;
-  suggested?: string;
-}
-
-export interface ShapeInfo {
-  id: string;
-  name: string;
-  description: string;
-  calls: number;
-}
-
-export interface ExampleInfo {
-  id: string;
-  name: string;
-  description: string;
-  sampleInput: Record<string, unknown>;
-  live: boolean;
-}
-
 export interface Reply {
   messages: Message[];
   steps: StepUpdate[];
-  /**
-   * 승인을 기다리며 멈춘 툴 호출들 (F3.3). **멈추면 새 메시지가 안 늘어나므로**, 이 필드가
-   * 없으면 클라이언트는 "멈춤"과 "빈 응답"을 구별할 수 없다. (자유 챗 응답엔 없다.)
-   */
   pending?: ToolCall[];
   error?: string;
 }
@@ -107,20 +71,6 @@ export const api = {
   agents: () => getJSON<AgentInfo[]>("/api/agents"),
   agentGraph: (id: string) =>
     getJSON<GraphView | { error: string }>(`/api/agents/graph?id=${encodeURIComponent(id)}`),
-  /** `decision`은 승인 대기에서 재개할 때만. 재개도 **같은 엔드포인트**다 (F3.3). */
   agentChat: (id: string, messages: Message[], decision?: "allow" | "deny") =>
     postJSON<Reply>("/api/agents/chat", { id, messages, decision }),
-
-  providers: () => getJSON<ProviderInfo[]>("/api/providers"),
-  shapes: () => getJSON<ShapeInfo[]>("/api/shapes"),
-  chatGraph: (shape: string) =>
-    getJSON<GraphView | { error: string }>(`/api/chat/graph?shape=${encodeURIComponent(shape)}`),
-  chat: (body: { spec: string; messages: Message[]; shape: string; system?: string }) =>
-    postJSON<Reply>("/api/chat", body),
-
-  examples: () => getJSON<ExampleInfo[]>("/api/examples"),
-  exampleGraph: (id: string) =>
-    getJSON<GraphView | { error: string }>(`/api/graph?id=${encodeURIComponent(id)}`),
-  runExample: (id: string, input: Record<string, unknown>, model?: string) =>
-    postJSON<{ steps: StepUpdate[]; error?: string }>("/api/run", { id, input, model }),
 };

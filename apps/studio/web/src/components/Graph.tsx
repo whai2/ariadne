@@ -3,8 +3,6 @@ import { useEffect, useId, useState } from "react";
 import type { GraphView } from "../api";
 import { type Theme, useTheme } from "../theme";
 
-// 팔레트를 CSS !important로 SVG에 덮는 대신 mermaid themeVariables로 준다(mermaid-정석).
-// 테마별 두 벌 — 렌더 직전에 initialize를 다시 불러 스위칭한다(전역 config라 idempotent).
 const MERMAID_VARS: Record<Theme, Record<string, string>> = {
   dark: {
     background: "#16171a",
@@ -26,7 +24,6 @@ function label(n: string): string {
   return n === "__start__" ? "START" : n === "__end__" ? "END" : n;
 }
 
-// 조건부 엣지는 점선 — 라우터가 런타임에 고르는 길이라 항상 가는 게 아니다(S6).
 function toMermaid(g: GraphView): string {
   const lines = ["graph TD"];
   for (const e of g.edges) {
@@ -48,7 +45,6 @@ export function Graph({ graph }: { graph: GraphView | { error: string } | null }
       return;
     }
     let cancelled = false;
-    // 렌더 직전 테마에 맞춰 재-init — 다크↔라이트 토글 시 노드/글자/엣지 색이 따라온다.
     mermaid.initialize({
       startOnLoad: false,
       theme: "base",

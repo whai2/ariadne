@@ -2,10 +2,6 @@ import { useEffect, useState } from "react";
 import { type AgentInfo, api } from "./api";
 import { useTheme } from "./theme";
 import { AgentView } from "./views/AgentView";
-import { ChatView } from "./views/ChatView";
-import { ExamplesView } from "./views/ExamplesView";
-
-type View = { kind: "agent"; id: string } | { kind: "chat" } | { kind: "ex" };
 
 function NavItem({
   active,
@@ -43,17 +39,17 @@ function NavItem({
 
 export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
-  const [view, setView] = useState<View>({ kind: "chat" });
+  const [selectedId, setSelectedId] = useState<string>();
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
     api.agents().then((list) => {
       setAgents(list);
-      if (list[0]) setView({ kind: "agent", id: list[0].id });
+      if (list[0]) setSelectedId(list[0].id);
     });
   }, []);
 
-  const selected = view.kind === "agent" ? agents.find((a) => a.id === view.id) : undefined;
+  const selected = agents.find((a) => a.id === selectedId);
 
   return (
     <div className="flex h-full">
@@ -72,8 +68,8 @@ export function App() {
           agents.map((a) => (
             <NavItem
               key={a.id}
-              active={view.kind === "agent" && view.id === a.id}
-              onClick={() => setView({ kind: "agent", id: a.id })}
+              active={a.id === selectedId}
+              onClick={() => setSelectedId(a.id)}
               title={a.name}
               subtitle={a.tools.length ? a.tools.join("·") : "툴 없음"}
               dot={a.ready ? "ready" : "no"}
@@ -82,20 +78,6 @@ export function App() {
         ) : (
           <p className="px-2 text-faint text-xs">불러오는 중…</p>
         )}
-
-        <div className="my-3 h-px bg-border" />
-        <NavItem
-          active={view.kind === "chat"}
-          onClick={() => setView({ kind: "chat" })}
-          title="Chat"
-          subtitle="프로바이더·모양 실험"
-        />
-        <NavItem
-          active={view.kind === "ex"}
-          onClick={() => setView({ kind: "ex" })}
-          title="Examples"
-          subtitle="그래프 갤러리"
-        />
 
         <button
           type="button"
@@ -108,11 +90,7 @@ export function App() {
       </nav>
 
       <main className="flex-1 overflow-y-auto">
-        {view.kind === "agent" && selected ? (
-          <AgentView key={selected.id} agent={selected} />
-        ) : null}
-        {view.kind === "chat" ? <ChatView /> : null}
-        {view.kind === "ex" ? <ExamplesView /> : null}
+        {selected ? <AgentView key={selected.id} agent={selected} /> : null}
       </main>
     </div>
   );

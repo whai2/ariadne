@@ -1,6 +1,5 @@
 import type { StepUpdate } from "../api";
 
-/** 슈퍼스텝별로 실행된 노드 + 그 직후 채널 스냅샷. "상태 = 채널들"을 눈으로(S2). */
 export function Steps({ steps, empty }: { steps: StepUpdate[]; empty?: string }) {
   if (!steps.length) {
     return (
