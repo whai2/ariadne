@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   type AgentInfo,
   api,
+  type Checkpoint,
   type GraphView,
   type Injected,
   type MemoryView,
@@ -102,6 +103,65 @@ function InjectedBanner({ injected }: { injected: Injected }) {
   );
 }
 
+/**
+ * 실행 상태 — 이 에이전트가 대화 말고 무엇을 들고 있나 (F5.2).
+ *
+ * **체크포인트를 끄면 매 턴 초기값으로 돌아간다.** 승인 왕복은 멀쩡히 도는데 예산만
+ * 조용히 리셋된다 — 아무도 안 알려주는 그 실패를 눈으로 보라고 만든 토글이다.
+ */
+function StatePanel({
+  agent,
+  checkpoint,
+  use,
+  busy,
+  onToggle,
+}: {
+  agent: AgentInfo;
+  checkpoint?: Checkpoint;
+  use: boolean;
+  busy: boolean;
+  onToggle: (on: boolean) => void;
+}) {
+  const keys = checkpoint === undefined ? [] : Object.keys(checkpoint);
+  const budget = checkpoint?.budget;
+  const held = Array.isArray(checkpoint?.messages) ? checkpoint.messages.length : 0;
+  return (
+    <div className="mt-2.5 rounded-md border border-border bg-surface-2 p-2.5">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-muted text-xs">💾 실행 상태</span>
+        <label className="flex cursor-pointer items-center gap-1.5 text-faint text-xs">
+          <input
+            type="checkbox"
+            checked={use}
+            disabled={busy}
+            onChange={(e) => onToggle(e.target.checked)}
+          />
+          체크포인트로 이어 돌리기
+        </label>
+      </div>
+      <p className="mt-1.5 font-mono text-fg text-xs">
+        남은 예산 {typeof budget === "number" ? budget : "—"} / {agent.budget}
+      </p>
+      <p className="mt-1 font-mono text-faint text-xs">
+        {keys.length === 0 ? "아직 없음" : `채널 [${keys.join(", ")}] · 이력 ${held}개 포함`}
+      </p>
+      <p className="mt-1.5 text-faint text-xs">
+        {use ? (
+          <>
+            <b>켜짐</b> — 보내는 건 <b>새 메시지 하나</b>뿐이고 나머지는 복원에서 온다. 예산이
+            턴마다 1씩 줄어든다.
+          </>
+        ) : (
+          <>
+            <b>꺼짐</b> — 이력 전체를 매 턴 다시 보낸다. 대화는 이어지는데{" "}
+            <b>예산은 매 턴 리셋된다.</b>
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
 export function AgentView({ agent }: { agent: AgentInfo }) {
   const [graph, setGraph] = useState<GraphView | { error: string } | null>(null);
   const [convo, setConvo] = useState<Message[]>([]);
@@ -111,6 +171,8 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
   const [error, setError] = useState("");
   const [memory, setMemory] = useState<MemoryView | null>(null);
   const [injected, setInjected] = useState<Injected>();
+  const [checkpoint, setCheckpoint] = useState<Checkpoint>();
+  const [useCheckpoint, setUseCheckpoint] = useState(true);
 
   useEffect(() => {
     setConvo([]);
@@ -120,6 +182,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setGraph(null);
     setMemory(null);
     setInjected(undefined);
+    setCheckpoint(undefined);
     api.agentGraph(agent.id).then(setGraph);
     api.memory(agent.id).then(setMemory);
   }, [agent.id]);
@@ -131,7 +194,14 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setError("");
     setSteps([]);
     setInjected(undefined);
-    const res = await api.agentChat(agent.id, history, decision);
+
+    // 체크포인트를 쓰면 **복원에 이미 들어 있는 만큼은 빼고** 보낸다. 그게 "새것만"의 뜻이고,
+    // 안 빼면 누적 채널이 두 배가 되고 이력이 두 벌이 된다.
+    const carried = useCheckpoint ? checkpoint : undefined;
+    const held = Array.isArray(carried?.messages) ? (carried.messages as Message[]).length : 0;
+    const outgoing = carried === undefined ? history : history.slice(held);
+
+    const res = await api.agentChat(agent.id, outgoing, decision, carried);
     setPending(false);
     // 턴이 실패해도 다시 읽는다 — 에피소드는 `finally`에서 닫히므로 실패한 run도 행으로 남는다.
     api.memory(agent.id).then(setMemory);
@@ -143,6 +213,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setSteps(res.steps);
     setAwaiting(res.pending ?? []);
     setInjected(res.injected);
+    setCheckpoint(res.checkpoint);
   }
 
   const send = (text: string) => turn([...convo, { role: "human", content: text }]);
@@ -211,6 +282,15 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
           {awaiting.length > 0 ? (
             <ApprovalPanel calls={awaiting} busy={pending} onDecide={decide} />
           ) : null}
+          {agent.budget === undefined ? null : (
+            <StatePanel
+              agent={agent}
+              checkpoint={checkpoint}
+              use={useCheckpoint}
+              busy={pending}
+              onToggle={setUseCheckpoint}
+            />
+          )}
           <Composer onSend={send} disabled={pending || awaiting.length > 0} />
           {error ? (
             <div className="mt-2 whitespace-pre-wrap rounded-md border border-danger/40 bg-danger/10 p-2.5 font-mono text-danger text-xs">

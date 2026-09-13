@@ -36,4 +36,27 @@ export interface BaseChannel<Value = unknown, Update = Value> {
    * langgraph 대응: BaseChannel.copy.
    */
   copy(): BaseChannel<Value, Update>;
+  /**
+   * 직렬화 가능한 스냅샷을 내놓는다(F5.2). 비어 있으면 `MISSING`을 돌려주고,
+   * 그러면 체크포인트에 **키가 아예 안 생긴다** — 그게 "빈 채널"과 "값이 마침
+   * undefined"를 가르는 유일한 방법이다.
+   *
+   * `copy()`와 하는 일이 비슷해 보이지만 목적지가 다르다: `copy()`는 메모리 안에서
+   * 끝나므로 `Set`이든 클로저든 그대로 들고 가면 되고, 이쪽은 **JSON을 건너야 해서**
+   * 그런 것들을 평범한 값으로 펴야 한다(`NamedBarrierValue`가 그 예다).
+   *
+   * langgraph 대응: channels/base.py 의 BaseChannel.checkpoint.
+   */
+  checkpoint(): unknown;
+  /**
+   * 스냅샷에서 **새 인스턴스**를 만든다(F5.2). `this`는 팩토리가 갓 만든 빈 채널이고,
+   * 리듀서·배리어 이름 같은 **코드에서 오는 것**만 물려준다.
+   *
+   * **리듀서를 타지 않는다.** 복원은 *쓰기*가 아니라 *세팅*이다 — `update()`로 하면
+   * 누적 채널이 복원값 위에 다시 접혀 값이 어긋난다. 저장된 값은 리듀서가 이미
+   * 다 적용된 결과이므로 그대로 대입하는 게 맞다.
+   *
+   * langgraph 대응: BaseChannel.from_checkpoint (거기서도 `empty.value = checkpoint`다).
+   */
+  fromCheckpoint(value: unknown): BaseChannel<Value, Update>;
 }

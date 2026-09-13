@@ -7,11 +7,14 @@ import {
 } from "@ariadne/agent";
 import type {
   BaseMessage,
+  ChannelCheckpoint,
   CompiledGraph,
   MessagesState,
+  StateSchema,
   StepUpdate,
   ToolCall,
 } from "@ariadne/core";
+import { messagesSchema } from "@ariadne/core";
 import { connectStdio, type McpClient, mcpTools, type StdioServerConfig } from "@ariadne/mcp";
 import {
   chooseFact,
@@ -36,6 +39,13 @@ export interface AgentDef {
   mcpServerName?: string;
   mcpError?: string;
   approval?: string[];
+  /**
+   * 대화 말고 **채널을 하나 더** 두는 데모 (F5.2). 매 턴 1씩 쓴다.
+   *
+   * 숫자만 적는다 — 리듀서를 만드는 건 `buildAgentGraph`다(`approval`이 문자열 배열이고
+   * `askFor`가 부팅 코드에 있는 것, `mcp`가 선언이고 연결이 `connectMcpAgents`인 것과 같은 모양).
+   */
+  budget?: number;
 }
 
 export const agents: AgentDef[] = [
@@ -50,6 +60,7 @@ export const agents: AgentDef[] = [
     system: "너는 비서다. 날씨·단어 수·메모 저장이 필요하면 툴을 쓰고, 답은 간결하게 한국어로.",
     maxToolRounds: 3,
     approval: ["write_note"],
+    budget: 5,
   },
   {
     id: "filesystem",
@@ -99,6 +110,7 @@ export interface AgentInfo {
   mcpServer?: string;
   mcpError?: string;
   approval?: string[];
+  budget?: number;
   ready: boolean;
   need: string;
 }
@@ -123,6 +135,7 @@ export function agentInfo(
     ...(def.approval === undefined
       ? {}
       : { approval: def.approval.filter((n) => def.tools.some((t) => t.name === n)) }),
+    ...(def.budget === undefined ? {} : { budget: def.budget }),
     ready: status?.ready ?? false,
     need: status?.need ?? "알 수 없는 프로바이더",
   };
@@ -167,6 +180,11 @@ export function composeSystem(
   return [base, block].filter((x): x is string => x !== undefined && x !== "").join("\n\n");
 }
 
+/** 대화 말고도 채널이 있는 에이전트의 상태 (F5.2). */
+export interface BudgetState extends MessagesState {
+  budget: number;
+}
+
 export function buildAgentGraph(
   def: AgentDef,
   preview = false,
@@ -178,9 +196,15 @@ export function buildAgentGraph(
     ? previewModel
     : model(def.model, { promptedTools: def.tools.length > 0 });
   const gated = def.tools.length > 0 && (def.approval?.length ?? 0) > 0;
+  // 선언(숫자)을 여기서 살아있는 것(리듀서)으로 바꾼다. 합계 리듀서라 입력이 **델타**가 된다.
+  const schema: StateSchema<BudgetState> | undefined =
+    def.budget === undefined
+      ? undefined
+      : { ...messagesSchema, budget: { reducer: (a, b) => a + b } };
   return createAgent({
     model: chatModel,
     tools: def.tools,
+    ...(schema === undefined ? {} : { schema: schema as StateSchema<MessagesState> }),
     ...(() => {
       const system = composeSystem(def.system, facts);
       return system === undefined ? {} : { system };
@@ -210,6 +234,13 @@ export interface AgentReply {
   pending: ToolCall[];
   /** 사실이 없으면 **키 자체가 없다**(F2.1의 규칙 — 비면 안 싣는다). */
   injected?: Injected;
+  /**
+   * 이 턴이 끝난 자리의 실행 상태 (F5.2).
+   *
+   * **무상태 규약은 안 깨진다** — 클라이언트가 쥐는 것이 *이력*에서 *체크포인트*로 바뀔 뿐이다.
+   * (S12의 `pending`·S13의 `injected`와 같은 모양: 안쪽에선 상태, 경계 밖에선 필드.)
+   */
+  checkpoint?: ChannelCheckpoint;
 }
 
 export async function agentTurn(
@@ -217,6 +248,7 @@ export async function agentTurn(
   history: BaseMessage[],
   decision?: Approval,
   memory?: MemoryStore,
+  checkpoint?: ChannelCheckpoint,
 ): Promise<AgentReply> {
   memory?.consolidate(def.id);
   const fact = chooseFact(memory?.scoredFacts(def.id) ?? []);
@@ -232,6 +264,18 @@ export async function agentTurn(
       : { onDecision: (kind, targets) => memory.recordValueEvent(episode, def.id, kind, targets) };
 
   const graph = buildAgentGraph(def, false, decision, hooks, fact === undefined ? [] : [fact]);
+
+  // 복원했으면 입력엔 **새것만** 싣는다 — 복원은 대입(리듀서 우회), 입력은 리듀서 통과라
+  // 둘이 겹치면 접힌다(누적 채널은 두 배, 이력은 두 벌).
+  const restored = Array.isArray(checkpoint?.messages)
+    ? (checkpoint.messages as BaseMessage[]).length
+    : 0;
+  const before = restored + history.length;
+  // 첫 턴은 초기 예산에서 이번 턴 비용을 뺀 값을 놓고, 이어지는 턴은 비용만 얹는다.
+  const cost = def.budget === undefined ? {} : { budget: restored === 0 ? def.budget - 1 : -1 };
+  const input = { messages: history, ...cost } as MessagesState;
+  const opts = checkpoint === undefined ? undefined : { checkpoint };
+
   const steps: StepUpdate<MessagesState>[] = [];
   let produced: BaseMessage[] = [];
   let pending: ToolCall[] = [];
@@ -239,11 +283,12 @@ export async function agentTurn(
   // (예전엔 `finished` 플래그로 갈랐는데, 판정을 성공 경로에서 미리 내니 그 플래그가 필요 없어졌다.)
   let outcome: InjectionOutcome | undefined;
   try {
-    for await (const step of graph.stream({ messages: history })) {
+    for await (const step of graph.stream(input, opts)) {
       steps.push(step);
     }
-    const final = steps.at(-1)?.state.messages ?? history;
-    produced = final.slice(history.length);
+    const last = steps.at(-1);
+    const final = last?.state.messages ?? history;
+    produced = final.slice(before);
     pending = pendingToolCalls(final);
     if (fact !== undefined) outcome = judge(fact.target, produced, pending);
     return {
@@ -251,6 +296,7 @@ export async function agentTurn(
       steps,
       pending,
       ...(fact === undefined ? {} : { injected: { fact, outcome: outcome ?? null } }),
+      ...(last === undefined ? {} : { checkpoint: last.checkpoint }),
     };
   } finally {
     if (memory !== undefined && episode !== undefined) {

@@ -6,6 +6,7 @@
 
 export {
   applyWrites,
+  checkpointChannels,
   expireStale,
   localRead,
   prepareNextTasks,
@@ -13,9 +14,10 @@ export {
   snapshotChannels,
   type Task,
 } from "./algo";
-export { CompiledGraph } from "./loop";
+export { CompiledGraph, type StreamOptions } from "./loop";
 export type { BoundFn, ChannelWriteEntry, PregelNode, Writer } from "./node";
 export type {
+  ChannelCheckpoint,
   ChannelSnapshot,
   Channels,
   GraphEdge,

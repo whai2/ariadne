@@ -3,6 +3,7 @@
 
 import {
   applyWrites,
+  checkpointChannels,
   expireStale,
   localRead,
   prepareNextTasks,
@@ -11,7 +12,17 @@ import {
   type Task,
 } from "./algo";
 import type { ChannelWriteEntry } from "./node";
-import type { Channels, GraphView, PregelSpec, StepUpdate } from "./types";
+import type { ChannelCheckpoint, Channels, GraphView, PregelSpec, StepUpdate } from "./types";
+
+/** 실행 옵션 (F5.2). */
+export interface StreamOptions {
+  /**
+   * 지난 run이 남긴 실행 상태. 주면 채널을 **리듀서를 우회해** 그 값으로 세워두고
+   * 시작한다. 그래서 `input`의 뜻이 바뀐다 — 전체 상태가 아니라 **이번에 새로 온 것**이다.
+   * (복원 위에 같은 값을 또 실으면 누적 채널에서 두 번 접힌다.)
+   */
+  checkpoint?: ChannelCheckpoint;
+}
 
 /**
  * compile 결과. 실행(stream/invoke)만 담당한다.
@@ -61,16 +72,25 @@ export class CompiledGraph<S extends object> {
    * 한 스텝: Plan(트리거가 깨운 태스크) → Execute(같은 스냅샷/자기 payload로 병렬 실행,
    *        writer가 쓰기를 버퍼) → Update(트리거 consume → applyWrites → 만료 스윕).
    */
-  async *stream(input: S): AsyncGenerator<StepUpdate<S>, S> {
+  async *stream(input: S, opts?: StreamOptions): AsyncGenerator<StepUpdate<S>, S> {
     const { nodes, startWriters, channelFactories, controlChannels } = this.spec;
 
+    // 채널은 실행마다 새로 만든다(그래프는 재사용 가능해야 하므로). 체크포인트가 있으면
+    // 갓 만든 빈 채널을 **프로토타입 삼아** 복원본으로 갈아끼운다 — 리듀서·배리어 이름 같은
+    // 코드에서 오는 것은 프로토타입이 들고 있고, 저장된 값만 얹힌다.
+    const saved = opts?.checkpoint;
     const channels: Channels = new Map();
     for (const [key, make] of channelFactories) {
-      channels.set(key, make());
+      const fresh = make();
+      const restored = saved !== undefined && key in saved;
+      channels.set(key, restored ? fresh.fromCheckpoint(saved[key]) : fresh);
     }
 
     // 입력 주입 = 가상의 START 정점이 도는 스텝. 먼저 상태를 채우고(진입 라우터가 읽어야 하므로),
     // 그 다음 진입 writers가 트리거를 쓴다. 관찰되는 step 0은 첫 사용자 노드다.
+    //
+    // **복원과 반대 경로다.** 복원은 대입(리듀서 우회), 입력은 `applyWrites`(리듀서 통과).
+    // 섞으면 누적 채널이 복원값 위에 또 접힌다 — langgraph가 둘을 엄격히 가르는 이유다.
     applyWrites(
       channels,
       Object.entries(input).map(([channel, value]) => ({ channel, value })),
@@ -117,6 +137,7 @@ export class CompiledGraph<S extends object> {
         nodes: tasks.map((t) => t.name),
         state: readChannels<S>(channels, controlChannels),
         channels: snapshotChannels(channels, controlChannels),
+        checkpoint: checkpointChannels(channels, controlChannels),
       };
       step++;
     }
@@ -125,8 +146,8 @@ export class CompiledGraph<S extends object> {
   }
 
   /** stream을 끝까지 소비하고 최종 상태만 반환한다. (invoke = stream의 마지막) */
-  async invoke(input: S): Promise<S> {
-    const gen = this.stream(input);
+  async invoke(input: S, opts?: StreamOptions): Promise<S> {
+    const gen = this.stream(input, opts);
     let r = await gen.next();
     while (!r.done) {
       r = await gen.next();

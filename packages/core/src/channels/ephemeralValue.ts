@@ -51,4 +51,16 @@ export class EphemeralValue<T> implements BaseChannel<T, T> {
     next.value = this.value;
     return next;
   }
+
+  checkpoint(): unknown {
+    return this.value;
+  }
+
+  fromCheckpoint(value: unknown): EphemeralValue<T> {
+    const next = new EphemeralValue<T>();
+    if (value !== MISSING) {
+      next.value = value as T;
+    }
+    return next;
+  }
 }

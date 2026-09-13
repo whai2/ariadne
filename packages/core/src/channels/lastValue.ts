@@ -45,4 +45,16 @@ export class LastValue<T> implements BaseChannel<T, T> {
     next.value = this.value;
     return next;
   }
+
+  checkpoint(): unknown {
+    return this.value;
+  }
+
+  fromCheckpoint(value: unknown): LastValue<T> {
+    const next = new LastValue<T>();
+    if (value !== MISSING) {
+      next.value = value as T;
+    }
+    return next;
+  }
 }

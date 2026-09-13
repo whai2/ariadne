@@ -2,11 +2,12 @@
 // 전부 인자만 보고 결정하는 작은 함수라 단독으로 테스트 가능하다.
 // langgraph 대응: pregel/_algo.py.
 
+import { MISSING } from "../channels/base";
 import { LastValue } from "../channels/lastValue";
 import { TASKS } from "../constants";
 import type { Send } from "../send";
 import type { ChannelWriteEntry, PregelNode } from "./node";
-import type { ChannelSnapshot, Channels } from "./types";
+import type { ChannelCheckpoint, ChannelSnapshot, Channels } from "./types";
 
 /**
  * 상태 채널들에서 값을 모아 평범한 상태 객체로 만든다(Read 단계).
@@ -21,6 +22,31 @@ export function readChannels<S>(channels: Channels, control: ReadonlySet<string>
     }
   }
   return out as S;
+}
+
+/**
+ * 채널들에서 **직렬화 가능한** 스냅샷을 모은다 (F5.2).
+ *
+ * `readChannels`와 나란히 두면 차이가 보인다: 저쪽은 노드에게 줄 **현재 값**을 모으고
+ * (`get()` — 비면 건너뜀), 이쪽은 다음 run에게 넘길 **저장 형태**를 모은다
+ * (`checkpoint()` — 비면 키 자체를 안 만듦). 제어 채널을 빼는 이유도 다르다 —
+ * 저쪽은 "노드가 볼 게 아니라서", 이쪽은 "복원하면 진입과 겹쳐서"다.
+ */
+export function checkpointChannels(
+  channels: Channels,
+  control: ReadonlySet<string>,
+): ChannelCheckpoint {
+  const out: ChannelCheckpoint = {};
+  for (const [key, ch] of channels) {
+    if (control.has(key)) {
+      continue;
+    }
+    const value = ch.checkpoint();
+    if (value !== MISSING) {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 /**

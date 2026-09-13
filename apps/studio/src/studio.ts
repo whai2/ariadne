@@ -1,4 +1,4 @@
-import type { BaseMessage } from "@ariadne/core";
+import type { BaseMessage, ChannelCheckpoint } from "@ariadne/core";
 import type { MemoryStore } from "@ariadne/memory";
 import { agentInfo, agents, agentTurn, buildAgentGraph } from "./agents";
 
@@ -64,7 +64,12 @@ export function createStudio(memory?: MemoryStore): Studio {
       }
 
       if (req.method === "POST" && url.pathname === "/api/agents/chat") {
-        let body: { id?: string; messages?: BaseMessage[]; decision?: string };
+        let body: {
+          id?: string;
+          messages?: BaseMessage[];
+          decision?: string;
+          checkpoint?: ChannelCheckpoint;
+        };
         try {
           body = (await req.json()) as typeof body;
         } catch {
@@ -74,14 +79,18 @@ export function createStudio(memory?: MemoryStore): Studio {
         if (def === undefined) {
           return Response.json({ error: "에이전트가 없다" }, { status: 404 });
         }
-        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+        // 체크포인트가 있으면 **빈 입력이 정당하다** — 이력은 복원에서 오고, 승인 재개처럼
+        // 새로 보낼 말이 없는 턴도 있다. 없을 때만 예전 규약(이력 전체)을 강제한다.
+        if (!Array.isArray(body.messages) || (body.messages.length === 0 && !body.checkpoint)) {
           return Response.json({ error: "messages가 필요하다" }, { status: 400 });
         }
         if (body.decision !== undefined && body.decision !== "allow" && body.decision !== "deny") {
           return Response.json({ error: "decision은 allow 또는 deny다" }, { status: 400 });
         }
         try {
-          return Response.json(await agentTurn(def, body.messages, body.decision, memory));
+          return Response.json(
+            await agentTurn(def, body.messages, body.decision, memory, body.checkpoint),
+          );
         } catch (e) {
           return Response.json({ error: describe(e) }, { status: 500 });
         }

@@ -1,5 +1,5 @@
 import { EmptyChannelError } from "../errors";
-import type { BaseChannel } from "./base";
+import { type BaseChannel, MISSING } from "./base";
 
 /**
  * 한 스텝에 온 값들을 **목록으로** 모아두는 채널. 다음 스텝 경계에서 비워진다. (V7)
@@ -40,6 +40,18 @@ export class Topic<T> implements BaseChannel<T[], T> {
   copy(): Topic<T> {
     const next = new Topic<T>();
     next.values = [...this.values];
+    return next;
+  }
+
+  checkpoint(): unknown {
+    return this.values.length === 0 ? MISSING : [...this.values];
+  }
+
+  fromCheckpoint(value: unknown): Topic<T> {
+    const next = new Topic<T>();
+    if (value !== MISSING) {
+      next.values = [...(value as T[])];
+    }
     return next;
   }
 }

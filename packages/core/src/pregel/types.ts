@@ -8,6 +8,20 @@ import type { PregelNode, Writer } from "./node";
 export type Channels = Map<string, BaseChannel>;
 
 /**
+ * 실행 상태의 직렬화된 스냅샷 — 채널 이름 → 값 (F5.2).
+ *
+ * **값이 있는 채널만 키가 생긴다.** 빈 채널은 `undefined`로 담기는 게 아니라 아예
+ * 없다(`BaseChannel.checkpoint()`가 `MISSING`을 주면 건너뛴다). 그래야 JSON을
+ * 건넌 뒤에도 "비었음"이 살아남는다.
+ *
+ * **제어 채널(`branch:to:*`·`join:*`·`__tasks__`)은 안 담는다.** 우리 멈춤은 항상
+ * 정지점이라 run이 끝난 자리에선 어차피 전부 비어 있고, 스텝 중간 스냅샷의 것을
+ * 복원하면 진입 writer와 겹쳐 같은 노드가 두 번 깨어난다. superstep 한가운데서
+ * 멈추는 건 core 범위 밖이다(그러려면 태스크 큐까지 필요하다 — langgraph의 pending writes).
+ */
+export type ChannelCheckpoint = Record<string, unknown>;
+
+/**
  * compile이 만들어 넘기는 **낮춰진 그래프**. graph/와 pregel/의 유일한 접점이다.
  * 이 모양만 맞으면 엔진은 누가 만들었는지 상관하지 않는다(StateGraph는 그중 하나일 뿐).
  */
@@ -64,4 +78,9 @@ export interface StepUpdate<S> {
   nodes: string[];
   state: S;
   channels: ChannelSnapshot[];
+  /**
+   * 이 스텝 직후의 실행 상태 (F5.2). `channels`와 같은 순간을 두 독자에게 말한다 —
+   * 저쪽은 **사람**(Studio 패널), 이쪽은 **기계**(다음 run이 되받을 값).
+   */
+  checkpoint: ChannelCheckpoint;
 }

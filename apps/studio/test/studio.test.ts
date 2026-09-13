@@ -631,3 +631,113 @@ describe("메모리 뷰 — 주입이 관찰된다 (S13)", () => {
     expect("injected" in body).toBe(false);
   }, 120_000);
 });
+
+describe("체크포인트 — 클라이언트가 쥐는 것이 이력에서 상태로 (F5.2)", () => {
+  let closeMcp: () => Promise<void>;
+
+  beforeAll(async () => {
+    closeMcp = await connectMcpAgents();
+  });
+  afterAll(async () => {
+    await closeMcp();
+  });
+
+  const post = (body: unknown) =>
+    studio.fetch(
+      new Request("http://x/api/agents/chat", { method: "POST", body: JSON.stringify(body) }),
+    );
+
+  it("예산 선언이 목록에 실리고, 그래프에 채널로 낮춰진다", async () => {
+    const list = (await (await studio.fetch(new Request("http://x/api/agents"))).json()) as Array<{
+      id: string;
+      budget?: number;
+    }>;
+    expect(list.find((a) => a.id === "mcp")?.budget).toBe(5);
+    // 선언이 없는 에이전트는 키 자체가 없다(비면 안 싣는다).
+    expect(list.find((a) => a.id === "filesystem")).not.toHaveProperty("budget");
+
+    // 숫자 선언이 부팅 코드에서 리듀서 채널이 된다 — `approval`이 `askFor`가 되는 것과 같은 자리.
+    const mcpDef = agents.find((a) => a.id === "mcp");
+    if (mcpDef === undefined) throw new Error("mcp 에이전트가 없다");
+    expect(buildAgentGraph(mcpDef, true).getChannelNames()).toContain("budget");
+  });
+
+  it("체크포인트가 없으면 빈 입력은 여전히 거절된다 — 예전 규약은 그대로", async () => {
+    expect((await post({ id: "mcp", messages: [] })).status).toBe(400);
+  });
+});
+
+describe.skipIf(!hasCli)("체크포인트 → 진짜 모델 (구독 자격증명)", () => {
+  let closeMcp: () => Promise<void>;
+
+  beforeAll(async () => {
+    closeMcp = await connectMcpAgents();
+  });
+  afterAll(async () => {
+    await closeMcp();
+  });
+
+  interface Reply {
+    messages: Array<{ role: string; content: string }>;
+    steps: Array<{ nodes: string[] }>;
+    pending: Array<{ name: string }>;
+    checkpoint?: { budget?: number; messages?: unknown[] };
+    error?: string;
+  }
+  const chat = async (body: unknown): Promise<Reply> =>
+    (await (
+      await studio.fetch(
+        new Request("http://x/api/agents/chat", { method: "POST", body: JSON.stringify(body) }),
+      )
+    ).json()) as Reply;
+
+  it("켜면 예산이 누적되고, 끄면 매 턴 리셋된다 — 대화는 둘 다 이어지는데", async () => {
+    // 켬 — 새 메시지만 보내고 체크포인트를 되돌려준다.
+    let cp: Reply["checkpoint"];
+    const withCp: number[] = [];
+    for (const text of ["서울 날씨", "부산은?"]) {
+      const r = await chat({
+        id: "mcp",
+        messages: [{ role: "human", content: text }],
+        checkpoint: cp,
+      });
+      expect(r.error).toBeUndefined();
+      cp = r.checkpoint;
+      withCp.push(cp?.budget ?? Number.NaN);
+    }
+    expect(withCp).toEqual([4, 3]);
+
+    // 끔 — 이력 전체를 보낸다. 대화는 이어지지만 예산은 늘 초기값에서 다시 시작한다.
+    let convo: Array<{ role: string; content: string }> = [];
+    const withoutCp: number[] = [];
+    for (const text of ["서울 날씨", "부산은?"]) {
+      convo = [...convo, { role: "human", content: text }];
+      const r = await chat({ id: "mcp", messages: convo });
+      convo = [...convo, ...r.messages];
+      withoutCp.push(r.checkpoint?.budget ?? Number.NaN);
+    }
+    expect(withoutCp).toEqual([4, 4]);
+  }, 180_000);
+
+  it("승인 재개는 빈 입력으로 된다 — 이력은 복원에서 온다", async () => {
+    const paused = await chat({
+      id: "mcp",
+      messages: [{ role: "human", content: "'장보기: 우유'라고 메모 저장해줘" }],
+    });
+    expect(paused.pending.map((c) => c.name)).toEqual(["write_note"]);
+
+    // 새로 보낼 말이 없다. 입력 [] + 체크포인트 + 결정.
+    const resumed = await chat({
+      id: "mcp",
+      messages: [],
+      decision: "allow",
+      checkpoint: paused.checkpoint,
+    });
+    expect(resumed.error).toBeUndefined();
+    expect(resumed.steps[0]?.nodes).toEqual(["tools"]); // model이 아니라 tools부터
+    expect(resumed.pending).toEqual([]);
+    // 응답엔 **새로 생긴 것만** — 복원된 이력은 안 되돌려준다.
+    expect(resumed.messages.length).toBe(2);
+    expect(resumed.checkpoint?.budget).toBe(3);
+  }, 180_000);
+});

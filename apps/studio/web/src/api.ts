@@ -38,6 +38,8 @@ export interface AgentInfo {
   mcpServer?: string;
   mcpError?: string;
   approval?: string[];
+  /** 대화 말고 채널이 하나 더 있는 에이전트의 초기 예산 (F5.2). */
+  budget?: number;
   ready: boolean;
   need: string;
 }
@@ -97,11 +99,16 @@ export interface Injected {
   outcome: InjectionOutcome | null;
 }
 
+/** `@ariadne/core`의 `ChannelCheckpoint` — 경계 밖이라 여기 다시 적는다(파일 첫 줄의 규약). */
+export type Checkpoint = Record<string, unknown>;
+
 export interface Reply {
   messages: Message[];
   steps: StepUpdate[];
   pending?: ToolCall[];
   injected?: Injected;
+  /** 이 턴이 끝난 자리의 실행 상태. 다음 턴에 그대로 되돌려주면 이어진다. */
+  checkpoint?: Checkpoint;
   error?: string;
 }
 
@@ -121,7 +128,11 @@ export const api = {
   agents: () => getJSON<AgentInfo[]>("/api/agents"),
   agentGraph: (id: string) =>
     getJSON<GraphView | { error: string }>(`/api/agents/graph?id=${encodeURIComponent(id)}`),
-  agentChat: (id: string, messages: Message[], decision?: "allow" | "deny") =>
-    postJSON<Reply>("/api/agents/chat", { id, messages, decision }),
+  agentChat: (
+    id: string,
+    messages: Message[],
+    decision?: "allow" | "deny",
+    checkpoint?: Checkpoint,
+  ) => postJSON<Reply>("/api/agents/chat", { id, messages, decision, checkpoint }),
   memory: (agent: string) => getJSON<MemoryView>(`/api/memory?agent=${encodeURIComponent(agent)}`),
 };

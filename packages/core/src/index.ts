@@ -44,6 +44,7 @@ export {
 } from "./graph";
 export type {
   BoundFn,
+  ChannelCheckpoint,
   ChannelSnapshot,
   ChannelWriteEntry,
   GraphEdge,
@@ -51,6 +52,7 @@ export type {
   PregelNode,
   PregelSpec,
   StepUpdate,
+  StreamOptions,
   Writer,
 } from "./pregel";
 export { CompiledGraph } from "./pregel";

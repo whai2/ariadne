@@ -48,4 +48,18 @@ export class BinaryOperatorAggregate<T> implements BaseChannel<T, T> {
     next.value = this.value;
     return next;
   }
+
+  checkpoint(): unknown {
+    return this.value;
+  }
+
+  /** **연산자는 코드에서 온다, 체크포인트에서 오지 않는다.** 함수는 직렬화할 수 없고,
+   * 할 수 있다 해도 저장된 값은 이미 접히고 난 결과라 다시 접을 일이 없다. */
+  fromCheckpoint(value: unknown): BinaryOperatorAggregate<T> {
+    const next = new BinaryOperatorAggregate<T>(this.operator);
+    if (value !== MISSING) {
+      next.value = value as T;
+    }
+    return next;
+  }
 }

@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "example": "bun run examples/react.ts",
-    "example:approval": "bun run examples/approval.ts"
+    "example:approval": "bun run examples/approval.ts",
+    "example:checkpoint": "bun run examples/checkpoint.ts"
   },
   "dependencies": {
     "@ariadne/core": "workspace:*",

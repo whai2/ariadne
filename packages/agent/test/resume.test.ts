@@ -16,6 +16,7 @@ import {
   type AIMessage,
   ai,
   type BaseMessage,
+  type ChannelCheckpoint,
   END,
   human,
   isToolMessage,
@@ -158,10 +159,11 @@ function statefulAgent(decision?: Approval) {
 async function runStateful(
   agent: ReturnType<typeof statefulAgent>["agent"],
   input: Stateful,
+  opts?: { checkpoint?: ChannelCheckpoint },
 ): Promise<{ final: Partial<Stateful>; steps: string[][] }> {
   const steps: string[][] = [];
   let final: Partial<Stateful> = input;
-  for await (const step of agent.stream(input)) {
+  for await (const step of agent.stream(input, opts)) {
     steps.push(step.nodes);
     final = step.state;
   }
@@ -242,6 +244,64 @@ describe("반례 — 상태가 대화 이력뿐이 아닐 때", () => {
 
     expect(after.slice(0, history.length)).toEqual(history);
     expect(after.length).toBe(history.length + 2); // 툴 결과 + 모델 답
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2-b. 체크포인트를 주면 반례가 뒤집힌다 (F5.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("체크포인트 — 위 반례가 뒤집힌다", () => {
+  test("상태가 살아남고, 재개에 이력을 다시 안 실어도 된다", async () => {
+    const first = statefulAgent();
+    let cp: ChannelCheckpoint = {};
+    for await (const step of first.agent.stream({
+      messages: [human("지워")],
+      plan: "notes.md를 지운다",
+      budget: 5,
+    })) {
+      cp = step.checkpoint;
+    }
+
+    // 저장소를 거쳤다고 치고 **실제로 JSON을 건넌다.**
+    const saved = JSON.parse(JSON.stringify(cp)) as ChannelCheckpoint;
+    expect(Object.keys(saved).sort()).toEqual(["budget", "messages", "plan"]);
+
+    // 재개 — 넘기는 건 체크포인트뿐이고 **입력은 비었다.** 위 반례에선 이력을
+    // 통째로 되돌려줘야 했는데, 이제 그럴 필요가 없다.
+    const second = statefulAgent("allow");
+    const resumed = await runStateful(second.agent, {} as Stateful, { checkpoint: saved });
+
+    expect(resumed.steps).toEqual([["tools"], ["model"]]);
+    expect(second.ran).toEqual(["a.txt"]);
+    expect(resumed.final.plan).toBe("notes.md를 지운다"); // 안 사라진다
+    expect(resumed.final.budget).toBe(5);
+    expect(pendingToolCalls(resumed.final.messages ?? [])).toEqual([]);
+  });
+
+  test("복원했으면 입력엔 새것만 — 이력을 또 실으면 두 번 쌓인다", async () => {
+    const first = statefulAgent();
+    let cp: ChannelCheckpoint = {};
+    let history: BaseMessage[] = [];
+    for await (const step of first.agent.stream({
+      messages: [human("지워")],
+      plan: "p",
+      budget: 5,
+    })) {
+      cp = step.checkpoint;
+      history = step.state.messages;
+    }
+
+    const second = statefulAgent("allow");
+    const doubled = await runStateful(second.agent, { messages: history, budget: 5 } as Stateful, {
+      checkpoint: JSON.parse(JSON.stringify(cp)) as ChannelCheckpoint,
+    });
+
+    // 누적 채널이 복원값 위에 접힌다. 이게 **두 배**다 — F5.1이 "지금은 안 생긴다"고
+    // 적어둔 위험이 복원을 넣은 지금 실제로 생겼다.
+    expect(doubled.final.budget).toBe(10);
+    // 메시지도 마찬가지다. 이력에 id가 없어 `addMessages`가 교체를 못 하고 덧붙인다.
+    expect(doubled.final.messages).toHaveLength(history.length * 2 + 2);
   });
 });
 
