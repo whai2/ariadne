@@ -1,12 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chooseFact, MemoryStore, type ScoredFact } from "@ariadne/memory";
-import {
-  agents,
-  approvalPolicy,
-  buildAgentGraph,
-  composeSystem,
-  connectMcpAgents,
-} from "../src/agents";
+import { approvalPolicy, buildAgentGraph, composeSystem } from "../src/domain/graph";
+import { agents, connectMcpAgents } from "../src/domain/registry";
 import { createStudio } from "../src/studio";
 
 /** 저장소 없이 뜬 스튜디오. **메모리가 없어도 그냥 돈다**는 게 계약이다. */

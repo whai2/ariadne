@@ -1,5 +1,5 @@
 import { MemoryStore } from "@ariadne/memory";
-import { connectMcpAgents } from "./agents";
+import { connectMcpAgents } from "./domain/registry";
 import { createStudio } from "./studio";
 
 const port = Number(process.env.PORT ?? 4111);

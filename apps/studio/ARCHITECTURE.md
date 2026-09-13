@@ -13,17 +13,13 @@ import하는가**만 다룬다. 각 단계가 왜 그렇게 됐는지는 [`docs/
 
 ```
 브라우저 (Vite 번들)          Bun 서버                    자식 프로세스
-  web/src/*.tsx     ──HTTP──▶  src/*.ts     ──stdio──▶  mcp-demo-server.ts
+  web/src/*.tsx     ──HTTP──▶  src/*.ts     ──stdio──▶  mcp-servers/demo.ts
                                                         (+ npx server-filesystem)
 ```
 
 **`web/src`는 `@ariadne/*`를 하나도 import하지 않는다.** 브라우저는 엔진을 모른다.
-[`web/src/api.ts`](web/src/api.ts) 첫 줄이 그 선언이다:
-
-> 서버 코드를 import하지 않는다 — UI는 브라우저에서 돌고 서버는 Bun에서 돈다.
-> **응답 모양만 여기 다시 적는다**(경계에서 타입을 지운 값).
-
-그래서 `Message`·`GraphView`·`StepUpdate`가 `api.ts`에 **다시 선언돼 있다.** 중복처럼 보이지만
+UI는 브라우저에서 돌고 서버는 Bun에서 돌기 때문에, [`web/src/api.ts`](web/src/api.ts)에는
+**응답 모양만 다시 적는다**(경계에서 타입을 지운 값). 그래서 `Message`·`GraphView`·`StepUpdate`가 `api.ts`에 **다시 선언돼 있다.** 중복처럼 보이지만
 HTTP 경계에서 타입은 어차피 지워지고, 공유하면 브라우저 번들이 core를 끌고 들어온다.
 
 ## 링 (packages) — Studio 밖
@@ -45,36 +41,52 @@ HTTP 경계에서 타입은 어차피 지워지고, 공유하면 브라우저 �
 `@ariadne/tools`는 이제 **타입으로만** 쓴다(`AnyTool`) — 로컬 데모 툴을 들던 에이전트가 사라져서다.
 툴은 전부 MCP 서버에서 온다.
 
-## 서버 (`src/`) — 아래에서 위로 한 방향
+## 서버 (`src/`) — 라우터 → 컨트롤러 → 서비스 → 도메인
 
 ```
-              server.ts          30줄   프로세스: 자원 열고 Bun.serve
-                  │
-                  ▼
-              studio.ts         160줄   HTTP 라우팅 (형제 if 4개)
-                  │
-                  ▼
-              agents.ts         370줄   에이전트 선언 · MCP 연결 · 한 턴
-                  │
-                  ▼
-             providers.ts        70줄   "지금 이 모델을 부를 수 있나"
+server.ts                  프로세스: MCP 연결 · MemoryStore 열기 · Bun.serve · 종료
+  └ studio.ts              조립: 서비스에 저장소 주입 → 컨트롤러 → 라우트 표
+      │
+      ▼
+    http/router.ts         (method, path) → 핸들러. **실패 → 상태 코드를 옮기는 유일한 자리**
+    http/static.ts         dist/ 서빙 (빌드 전이면 안내 페이지)
+      │
+      ▼
+    controllers/           요청 파싱·검증 → 서비스 호출 → Response.json
+      agents.ts              list · graph · chat (+ 순수 함수 parseChatBody)
+      memory.ts              view
+      │
+      ▼
+    services/              유스케이스. **HTTP를 모른다**
+      types.ts               계약: AgentService · MemoryService + 입출력 타입  ← 컨트롤러가 아는 전부
+      agents.ts              구현: list · graph · turn  ← memory를 아는 마지막 자리
+      memory.ts              구현: view (스토어 없으면 빈 뷰)
+      │
+      ▼
+    domain/                에이전트 그 자체. 위 계층을 모른다
+      registry.ts            AgentDef · agents · connectMcpAgents
+      graph.ts               buildAgentGraph · approvalPolicy · composeSystem
+      providers.ts           "지금 이 모델을 부를 수 있나"
+
+errors.ts                  BadRequestError · NotFoundError — 계층 공용 어휘, 상태 코드를 모른다
 ```
 
-| 파일 | 링 import | 로컬 import | 하는 일 |
+**`mcp-servers/`는 `src/` 밖에 있다.** 서버 코드가 import하는 모듈이 아니라 `domain/registry.ts`가
+자식 프로세스로 **띄우는** 독립 프로그램이라, 계층 어디에도 속하지 않는다(`mcp-sample/`과 같은 자리).
+
+| 계층 | 링 import | 하는 일 | 안 하는 일 |
 |---|---|---|---|
-| [`providers.ts`](src/providers.ts) | model | **없음** | 프로바이더 준비 상태 판정 |
-| [`agents.ts`](src/agents.ts) | agent, core, **mcp**, **memory**, model, tools(type) | `./providers` | 에이전트 선언 · 한 턴 |
-| [`studio.ts`](src/studio.ts) | core(type), **memory**(type) | `./agents` | 라우팅 |
-| [`server.ts`](src/server.ts) | **memory** | `./agents` `./studio` | 부팅 · 종료 |
-| [`mcp-demo-server.ts`](src/mcp-demo-server.ts) | **없음** | **없음** | 독립 stdio 프로세스 |
+| `http/` | 없음 | 경로 매칭 · 에러 → 400/404/500 | 검증 · 비즈니스 규칙 |
+| `controllers/` | core·**타입만** | 본문 파싱 · 검증(`BadRequestError`) | `try` · 상태 코드 · 도메인 직접 호출 · **서비스 구현 import**(`services/types`만) |
+| `services/` | agent · core · **memory** | 에이전트 찾기(`NotFoundError`) · 턴 조율 · 기록 | `Request`/`Response` |
+| `domain/` | agent · core · **mcp** · model · tools | 선언 · MCP 연결 · 그래프 만들기 | memory **기록**(값·콜백만 받는다) |
 
-읽히는 것 셋:
+**실패의 길이 하나다.** 컨트롤러는 "요청이 틀렸다"를, 서비스는 "없다"를 **던지기만** 하고,
+`http/router.ts`의 `errorResponse`가 400/404로 옮긴다. 나머지(모델 호출 실패 등)는 500 +
+`{ error }`. 그래서 컨트롤러와 서비스에 `try`가 없다 — `runTurn`의 `try/finally`는 에러 처리가
+아니라 **에피소드를 반드시 닫기 위한 것**이다.
 
-1. **`agents.ts`가 링을 가장 많이 안다** — 여섯 개 전부. `mcp`와 `memory`를 아는 **유일한** 자리다
-   (`server.ts`는 `MemoryStore.open` 한 줄뿐).
-2. **`studio.ts`는 `memory`를 `import type`으로만 쓴다.** 라우터는 저장소를 **통과**시킬 뿐 만지지
-   않는다는 뜻이고, `/api/memory` 한 곳만 예외로 읽는다.
-3. **가로 엣지가 없다.** 사슬이 일직선이다.
+의존 방향은 [`test/architecture.test.ts`](test/architecture.test.ts)가 강제한다.
 
 ## 브라우저 (`web/src/`)
 
@@ -97,17 +109,14 @@ main.tsx
 
 ## 라우팅 — 한 도메인의 3종 세트 + 관찰 창
 
-[`studio.ts`](src/studio.ts)의 본문은 `셋업 1줄 + 형제 if 4개`이고 **중첩이 없다** — 각 블록이
-`return`으로 끝나므로 **궁금한 하나만 읽으면 되고 앞뒤 문맥이 필요 없다.**
+라우트는 [`studio.ts`](src/studio.ts)의 **표 하나**다. 경로를 추가하는 일 = 표에 한 줄 + 컨트롤러에
+핸들러 하나 + (필요하면) 서비스 메서드 하나.
 
 | 목록        | 그래프 구조       | 실행                 | 관찰            |
 |-------------|-------------------|----------------------|-----------------|
 | `/api/agents` | `/api/agents/graph` | `POST /api/agents/chat` | `/api/memory` |
 
 구조 엔드포인트가 따로 있는 건 **"보내기 전에 그래프를 볼 수 있다"가 스튜디오의 정체성**이라서다.
-블록의 모양은 셋 — **A** 그냥 돌려준다(목록) · **B** 찾고 없으면 404(구조) ·
-**C** 파싱→검증→`try`로 위임(실행). C에서 `try`가 둘인 건 파싱 실패(400, 클라이언트 잘못)와
-실행 실패(500, 키가 없거나 호출이 깨졌다)를 가르기 위해서다.
 
 ## 등록된 에이전트 — 둘 다 승인 게이트가 걸려 있다
 
@@ -124,7 +133,7 @@ main.tsx
 
 | 테이블 | 언제 | 어느 에이전트 |
 |---|---|---|
-| `episodes` | `agentTurn` 1회마다 **무조건** | 둘 다 |
+| `episodes` | `runTurn` 1회마다 **무조건** | 둘 다 |
 | `value_events` | 사람이 승인/거부를 **실제로 눌렀을 때** | 둘 다 |
 | `facts` | 한 툴에 거부 ≥2 **그리고** 거부 > 승인 | 둘 다 |
 | `injections` | 사실이 있으면 매 턴 하나씩 시험 | 둘 다 |
@@ -144,8 +153,8 @@ main.tsx
 
 ## 흐름 하나 — 승인 게이트가 걸린 턴
 
-`agentTurn`을 부르는 자리는 **코드 전체에 한 곳**([`studio.ts`](src/studio.ts)의
-`POST /api/agents/chat`)이고, 브라우저에서 그 요청을 쏘는 함수도 하나
+턴을 도는 자리는 **코드 전체에 한 곳**([`services/agents.ts`](src/services/agents.ts)의
+`runTurn`)이고, 브라우저에서 그 요청을 쏘는 함수도 하나
 ([`AgentView.tsx`](web/src/views/AgentView.tsx)의 `turn`)다. `turn`을 부르는 자리가 둘 —
 `send`(사람이 보낸다)와 `decide`(승인/거부를 누른다). **즉 사람이 버튼을 누를 때만 돈다.**
 
@@ -162,20 +171,20 @@ main.tsx
 호출 사슬:
 
 ```
-Bun.serve                      src/server.ts
-└ studio.fetch                 src/studio.ts
-  └ POST /api/agents/chat      ← memory가 밖으로 나가는 유일한 자리
-    └ agentTurn(...)           src/agents.ts   ← memory를 아는 마지막 자리
+Bun.serve                        src/server.ts
+└ router (POST /api/agents/chat) src/http/router.ts        ← 던져지면 여기서 상태 코드
+  └ agents.chat                  src/controllers/agents.ts ← parseChatBody (400)
+    └ service.turn → runTurn     src/services/agents.ts    ← memory를 아는 마지막 자리 (404)
       ├ consolidate · chooseFact · beginEpisode · beginInjection
       │     읽기는 값(ScoredFact[])으로, 쓰기는 콜백(TurnHooks)으로 변신
-      ├ buildAgentGraph → createAgent   @ariadne/agent  ← memory라는 단어가 안 나온다
+      ├ buildAgentGraph → createAgent   src/domain/graph.ts → @ariadne/agent
       │   └ graph.stream               @ariadne/core (Pregel)
       │     └ gatedToolNode → policy → hooks.onDecision → recordValueEvent   ← 역류
       └ finally: endEpisode · endInjection(judge(...))
 ```
 
-**`agentTurn`이 그 왕복의 유일한 관문이다.** 아래로는 값과 콜백만 내려가고, 기록은 콜백을 타고
-거슬러 올라온다 — core도 agent 링도 그 일이 벌어지는 걸 모른다.
+**`runTurn`이 그 왕복의 유일한 관문이다.** 아래로는 값과 콜백만 내려가고, 기록은 콜백을 타고
+거슬러 올라온다 — domain도 agent 링도 core도 그 일이 벌어지는 걸 모른다.
 
 ## 실행
 
