@@ -69,7 +69,10 @@ export class CompiledGraph<S extends object> {
     let error: NodeExecutionError | undefined;
     try {
       const input = task.arg ? task.arg.value : snapshot;
-      const output = await task.node.bound(input as never);
+      const output = await task.node.bound(
+        input as never,
+        Object.freeze({ id, name: task.name, step, startedAt }),
+      );
       // 뒤의 라우터는 앞 writer의 쓰기를 로컬 읽기로 본다.
       for (const writer of task.node.writers) {
         writes.push(

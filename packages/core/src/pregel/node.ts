@@ -14,7 +14,15 @@ export interface ChannelWriteEntry {
  * 입력을 `never`로 두는 건 PULL(상태)·PUSH(payload)로 입력이 갈려서다 —
  * 어떤 `NodeFn<S, I>`든 여기 담기고, 꺼내 쓸 때 호출부에서 한 번만 좁힌다.
  */
-export type BoundFn = (input: never) => unknown;
+/** 실행기에서 발급한 태스크 식별 정보. 상태·관측 SDK와 무관하다. */
+export interface TaskContext {
+  readonly id: string;
+  readonly name: string;
+  readonly step: number;
+  readonly startedAt: number;
+}
+
+export type BoundFn = (input: never, context?: TaskContext) => unknown;
 
 /**
  * `bound` 실행 뒤에 도는 **쓰기 담당**. 노드 출력을 채널 쓰기 목록으로 바꾼다.

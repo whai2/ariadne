@@ -4,6 +4,7 @@
 // 실행 관찰 타입(StepUpdate·ChannelSnapshot·GraphView)은 엔진이 내보내는 것이라
 // pregel/types.ts에 산다.
 
+import type { TaskContext } from "../pregel";
 import type { Send } from "../send";
 import type { Command } from "./command";
 
@@ -27,8 +28,12 @@ export type NodeReturn<S> = Partial<S> | Command<S>;
  *
  * `I`는 이 노드가 받는 입력 타입이다. 기본은 상태 전체(`S`) — 엣지가 깨운 PULL 노드.
  * `Send`로만 도는 워커는 payload를 받으므로 `addNode<number>(...)`처럼 지정한다(V7).
+ * context는 실행기가 넘기는 읽기 전용 태스크 식별자다(F6.2). 직접 호출은 생략 가능하다.
  */
-export type NodeFn<S, I = S> = (input: I) => NodeReturn<S> | Promise<NodeReturn<S>>;
+export type NodeFn<S, I = S> = (
+  input: I,
+  context?: TaskContext,
+) => NodeReturn<S> | Promise<NodeReturn<S>>;
 
 /**
  * 라우팅 대상: 노드명(문자열, END 포함) 또는 Send(V6 동적 팬아웃).

@@ -42,6 +42,7 @@
         "@ariadne/core": "workspace:*",
         "@ariadne/memory": "workspace:*",
         "@ariadne/model": "workspace:*",
+        "@ariadne/observability": "workspace:*",
         "@ariadne/tools": "workspace:*",
       },
       "devDependencies": {
@@ -81,6 +82,16 @@
         "openai": "^7.10.0",
       },
     },
+    "packages/observability": {
+      "name": "@ariadne/observability",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@ariadne/core": "workspace:*",
+        "@ariadne/model": "workspace:*",
+        "@ariadne/tools": "workspace:*",
+        "zod": "^4.5.4",
+      },
+    },
     "packages/tools": {
       "name": "@ariadne/tools",
       "version": "0.0.0",
@@ -104,6 +115,8 @@
     "@ariadne/memory": ["@ariadne/memory@workspace:packages/memory"],
 
     "@ariadne/model": ["@ariadne/model@workspace:packages/model"],
+
+    "@ariadne/observability": ["@ariadne/observability@workspace:packages/observability"],
 
     "@ariadne/studio": ["@ariadne/studio@workspace:apps/studio"],
 

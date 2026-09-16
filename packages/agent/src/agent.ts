@@ -22,11 +22,14 @@ import {
   isAIMessage,
   type MessagesState,
   messagesSchema,
+  type NodeFn,
+  type NodeReturn,
   START,
   StateGraph,
   type StateSchema,
 } from "@ariadne/core";
 import type { ChatModel, ToolSpec } from "@ariadne/model";
+import { type GraphTrace, type SpanContext, tracedModel, tracedTool } from "@ariadne/observability";
 import { type AnyTool, toolNode, toolSpecs, toolsCondition } from "@ariadne/tools";
 import { type ApprovalPolicy, approvalEntry, approvalExit, gatedToolNode } from "./approval";
 import { ApprovalWithoutToolsError, ModelCannotUseToolsError } from "./errors";
@@ -37,6 +40,8 @@ const DEFAULT_MAX_TOOL_ROUNDS = 10;
 export interface AgentConfig<S extends MessagesState = MessagesState> {
   /** 이미 만들어진 모델. `model("provider/id", ...)`로 짓고 넘긴다. */
   model: ChatModel;
+  /** F6.2: traceRun이 제공한 run 전용 문맥. 주면 모델·툴 호출까지 연결한다. */
+  trace?: GraphTrace;
   /** 이 에이전트가 부를 수 있는 툴들. 비우면 **단발 호출 그래프**(START→model→END)가 된다. */
   tools?: readonly AnyTool[];
   /** 시스템 지시. 매 모델 호출의 `invoke` 옵션으로 실린다. */
@@ -135,15 +140,33 @@ export function createAgent<S extends MessagesState = MessagesState>(
 
   const g = new StateGraph<S>(schema);
 
-  g.addNode("model", async (state: S) => {
-    // 라운드 상한을 넘었으면 툴을 안 준다 → 모델이 산문으로 답하고 루프가 온전하게 끝난다.
-    const offerTools =
-      specs !== undefined && toolRoundsSinceLastHuman(state.messages) < maxToolRounds;
-    const reply = await model.invoke(state.messages, {
-      ...(system === undefined ? {} : { system }),
-      ...(offerTools ? { tools: specs } : {}),
-    });
-    return { messages: [reply] } as Partial<S>;
+  const wrapNode = (
+    fn: (state: S, parent?: SpanContext) => NodeReturn<S> | Promise<NodeReturn<S>>,
+  ): NodeFn<S> => (config.trace === undefined ? (state) => fn(state) : config.trace.node<S>(fn));
+
+  g.addNode(
+    "model",
+    wrapNode(async (state: S, parent) => {
+      // 라운드 상한을 넘었으면 툴을 안 준다 → 모델이 산문으로 답하고 루프가 온전하게 끝난다.
+      const offerTools =
+        specs !== undefined && toolRoundsSinceLastHuman(state.messages) < maxToolRounds;
+      const activeModel = parent === undefined ? model : tracedModel(model, parent);
+      const reply = await activeModel.invoke(state.messages, {
+        ...(system === undefined ? {} : { system }),
+        ...(offerTools ? { tools: specs } : {}),
+      });
+      return { messages: [reply] } as Partial<S>;
+    }),
+  );
+
+  const plainTools =
+    approval === undefined ? toolNode<S>(tools) : gatedToolNode<S>(tools, approval);
+  const observedTools = wrapNode((state, parent) => {
+    if (parent === undefined) return plainTools(state);
+    const wrapped = tools.map((t) => tracedTool(t, parent));
+    return (approval === undefined ? toolNode<S>(wrapped) : gatedToolNode<S>(wrapped, approval))(
+      state,
+    );
   });
 
   if (specs === undefined) {
@@ -153,7 +176,7 @@ export function createAgent<S extends MessagesState = MessagesState>(
   } else if (approval === undefined) {
     // 노드 이름이 "tools"인 건 toolsCondition이 그 문자열을 돌려주기 때문이다(langgraph도 같다).
     g.addEdge(START, "model");
-    g.addNode("tools", toolNode<S>(tools));
+    g.addNode("tools", observedTools);
     g.addConditionalEdges("model", toolsCondition, ["tools", END]);
     g.addEdge("tools", "model"); // 툴 결과를 들고 다시 model로 (루프)
   } else {
@@ -165,7 +188,7 @@ export function createAgent<S extends MessagesState = MessagesState>(
     //
     // `tools → model`이 정적 엣지에서 조건부로 바뀐 게 요점이다. 정적 엣지는 **취소가 안 된다**
     // (제어흐름이 채널 쓰기라 쓰기는 합집합이다) — 멈추려면 애초에 안 써야 한다.
-    g.addNode("tools", gatedToolNode<S>(tools, approval));
+    g.addNode("tools", observedTools);
     g.addConditionalEdges(START, approvalEntry, ["tools", "model"]);
     g.addConditionalEdges("model", toolsCondition, ["tools", END]);
     g.addConditionalEdges("tools", approvalExit, ["model", END]);

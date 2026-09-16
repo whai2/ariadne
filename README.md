@@ -9,7 +9,7 @@ TypeScript **올인원 에이전트 프레임워크**(Mastra 스타일)를 바�
 ## 모노레포 (Bun workspaces)
 ```
 packages/core   @ariadne/core   ← 그래프 엔진 (런타임 deps 0)
-packages/*      model·tools·agent·memory (예정)
+packages/*      model·tools·agent·mcp·memory·observability
 apps/studio     @ariadne/studio ← 비주얼 개발 UI (그래프 시각화 + 스텝 실행)
 ```
 
@@ -44,3 +44,13 @@ bun run verify     # 위 셋 전부 (로컬 CI 게이트)
 ```
 
 > CI(`.github/workflows/ci.yml`)는 GitHub 원격에 push하면 활성화된다.
+
+### 자체 트레이싱 (F6.2)
+
+`traceRun(trace => createAgent({ model, tools, trace }), input, { collector })`로
+run → superstep → node → model/tool 트리를 수집한다. `collector`는
+`new TraceCollector()`로 만들고 `spans()` / `tree(traceId)`로 조회한다.
+현재 메모리 수집까지 구현됐으며 영구 저장·Studio 트레이스 UI는 후속 단계다.
+
+키 없이 실행: `bun run --filter '@ariadne/observability' example`.
+설계·실패 처리·사용법: [F6.2 분석 노트](docs/notes/37-f6_2-span-tree.md).

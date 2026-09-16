@@ -54,6 +54,7 @@ export type {
   PregelSpec,
   StepUpdate,
   StreamOptions,
+  TaskContext,
   TaskUpdate,
   Writer,
 } from "./pregel";

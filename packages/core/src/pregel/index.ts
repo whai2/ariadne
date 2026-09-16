@@ -15,7 +15,7 @@ export {
   type Task,
 } from "./algo";
 export { CompiledGraph, type StreamOptions } from "./loop";
-export type { BoundFn, ChannelWriteEntry, PregelNode, Writer } from "./node";
+export type { BoundFn, ChannelWriteEntry, PregelNode, TaskContext, Writer } from "./node";
 export type {
   ChannelCheckpoint,
   ChannelSnapshot,

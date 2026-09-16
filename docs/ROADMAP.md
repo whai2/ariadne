@@ -166,7 +166,7 @@ Core가 조금이라도 돌면 곧바로 눈으로 관찰. `apps/studio` (`@aria
   - **벽 → 다음:** 이제 F4.3의 동률이 화면에서 읽힌다. 가르려면 먼저 `[기억한 것]` 틀이 교란 변수인지 재봐야 한다.
 - [ ] **S3 · 스텝 하이라이트/재생** — 실행 중 현재 노드를 그래프에서 강조, 스텝 넘기기. **→ S14에서 갚는다.** 지금까지 미뤄진 이유는 "현재 노드"를 놓을 **시간 축이 없어서**다(`StepUpdate`에 시각이 없다). F6.1이 `startedAt/endedAt`을 심으면 그 축이 생긴다.
 - [x] **S4 · 예제 그래프 갤러리** — 큐레이션된 예제 5종을 드롭다운으로 선택/관찰(linear/grow/accumulate/preserve/long). (사용자 파일 로드는 이후)
-- [ ] **S14 · 트레이스 뷰 — 그리고 S3를 갚는다** (F6.2 직후) — 스팬 타임라인/플레임 뷰 + 그래프에서 현재 노드 하이라이트·스텝 재생. 스텝을 클릭하면 `tasks[].writes`로 **"이 노드가 쓴 것"**이 갈려 보인다(오늘은 합쳐진 결과만 보인다). `GET /api/threads/:id/traces`.
+- [ ] **S14 · 트레이스 뷰 — 그리고 S3를 갚는다** (F6.2 직후) — 스팬 타임라인/플레임 뷰 + 그래프에서 현재 노드 하이라이트·스텝 재생. 스텝을 클릭하면 `tasks[].writes`로 **"이 노드가 쓴 것"**이 갈려 보인다(오늘은 합쳐진 결과만 보인다). `GET /api/threads/:id/traces`. F6.2 메모리 수집기의 완료 기록을 자체 저장소에 영구 보관하고, 성공·실패 run 모두 조회한다. 외부 전송은 범위에 없다.
   - **안 하는 것:** 타임트래블 재실행 — 체크포인트는 F5.3에 쌓여 있지만 과거 스텝으로 되돌려 다시 돌리는 건 **실이 요구할 때** 만든다.
 - [ ] **S15 · 실 뷰** (F9.3 직후) — 왼쪽에 베이스라인 궤적들(겹쳐 그린 히트맵), 오른쪽에 응고된 그래프, 아래에 성적표 비교. **"미로를 헤맨 발자국 → 길"**을 한 화면에서 본다.
 - 이후 core가 커지면: 채널/superstep 상태 관찰 등.
@@ -441,15 +441,15 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 - **검증:** 던지는 노드가 있는 그래프에서 `stream`이 **그 스텝을 yield한 뒤** 던진다. 한 스텝 두 노드 병렬에서 `tasks[i].writes`로 누가 무엇을 썼는지 갈린다. 가짜 어댑터로 usage 전달·캐시 합산·미보고/0 구분. 분석·후속 설계: [36-f6_1-observability.md](notes/36-f6_1-observability.md).
 - **벽 → 다음:** 스텝 배열은 있는데 **계층이 없다.** run > superstep > node > 모델호출 > 툴호출의 중첩을 core는 볼 수 없다 — 모델·툴 호출은 `bound` 안에서 일어난다.
 
-#### F6.2 · `@ariadne/observability` — 스팬 트리를 우리가 만든다
+#### F6.2 · `@ariadne/observability` — 스팬 트리를 우리가 만든다 ✅
 - **새 패키지. 런타임 deps 0** (core·memory 다음 **세 번째**). `observability → core`(타입만). **`model`·`tools`를 모른다** — 계측은 감싸기로 하고, **감싸는 쪽이** 그 둘을 안다.
 - **무엇:** `span.ts`(`Span { traceId, spanId, parentId, name, startedAt, endedAt, attributes, status }` + hex id 생성) · `graph.ts`(`StepUpdate.tasks` → superstep/node 스팬) · `model.ts`(`traced(model)` → `chat {model}` 스팬) · `tools.ts`(`execute_tool {name}`) · `collector.ts`.
 - **어휘만 빌린다 — 구현은 우리가 한다.** OpenTelemetry GenAI semantic conventions에서 `gen_ai.operation.name` · `gen_ai.provider.name` · `gen_ai.request.model` · `gen_ai.usage.*` · `gen_ai.tool.name`만 가져온다. **우리 것은 `ariadne.*`** — `ariadne.superstep` · `ariadne.node` · `ariadne.channel.writes`.
 - **superstep은 사용자 정의 계층으로 보존한다.** `ariadne.*` span도 부모관계를 실으면 외부 trace tree에서 표현할 수 있다. 자체 UI의 가치는 계층 유무보다 그래프·채널 쓰기와 연결한 설명이다.
-- **선행 설계 과제(F6.1에서 발견):** 완료 후 `StepUpdate`만으로 병렬 model/tool 호출의 부모를 정할 수 없다. 실행 전 명시 컨텍스트 전달과 task ID 연결을 먼저 검증한다. 링의 node wrapper를 우선 검토하며, 시각 겹침으로 부모를 추정하지 않는다.
-- **이 단계의 발견(예상):** 계측 지점이 정확히 둘로 갈린다 — **엔진은 yield로 관찰되고, 링은 감싸기로 관찰된다.**
+- **부모 연결:** core는 기존 task ID·이름·스텝·시작 시각만 읽기 전용 `TaskContext`로 노드에 전달한다. run별 `trace.node` 래퍼가 실행 전에 부모를 만들고 `StepUpdate`로 닫는다. 콜백·trace ID·스팬은 core에 없다. `createAgent({ trace })`는 모델·툴까지 연결한다.
+- **이 단계의 발견:** 계측 지점이 정확히 둘로 갈린다 — **엔진은 yield로 관찰되고, 링은 감싸기로 관찰된다.**
 - **안 하는 것:** OTel SDK 의존 · OTLP 전송 · Langfuse 연동(**참고 자료로만 쓴다**) · `AsyncLocalStorage`(부모 스팬은 **명시 인자**로 넘긴다 — 감춘 전역은 학습을 막는다) · 샘플링·배치.
-- **검증:** ReAct 3라운드 run에서 스팬 트리의 깊이·부모관계·개수가 정확. 실패 run에서 스팬이 `status: "error"`로 **닫힌다**(열린 채 안 남는다).
+- **검증:** ReAct 3라운드 run에서 스팬 트리의 깊이·부모관계·개수가 정확. 실패 run에서 스팬이 `status: "error"`로 **닫힌다**(열린 채 안 남는다). 같은 이름 Send·동시 run·승인 재개·관측 유무의 결과 일치를 검증했다. 분석: [37-f6_2-span-tree.md](notes/37-f6_2-span-tree.md).
 - **벽 → 다음:** 트레이스가 쌓이는데 **아무도 점수를 안 매긴다.** "잘 도는가"에 답할 수 없다.
 
 ### F7 · `@ariadne/evals` — "잘 도는가"를 숫자로 정한다
