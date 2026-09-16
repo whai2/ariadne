@@ -19,6 +19,7 @@ import {
 import OpenAI from "openai";
 import { EmptyConversationError } from "./errors";
 import type { ChatModel, ChatOptions, ToolSpec } from "./types";
+import { openAIUsage } from "./usage";
 
 /** 기본 응답 상한. 비스트리밍 요청이 HTTP 타임아웃에 걸리지 않는 선. */
 const DEFAULT_MAX_TOKENS = 16_000;
@@ -190,6 +191,7 @@ export function openaiCompatible(config: OpenAICompatibleConfig): ChatModel {
         message?.content ?? "",
         response.id,
         message === undefined ? undefined : toolCallsFrom(message),
+        openAIUsage(response.usage),
       );
     },
   };

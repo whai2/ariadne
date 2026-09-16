@@ -18,6 +18,7 @@ import {
 } from "@ariadne/core";
 import { EmptyConversationError, ModelRefusalError } from "./errors";
 import type { ChatModel, ChatOptions, ToolSpec } from "./types";
+import { anthropicUsage } from "./usage";
 
 /** 기본 모델. */
 const DEFAULT_MODEL = "claude-opus-5";
@@ -202,8 +203,13 @@ export function anthropicChat(config: AnthropicChatConfig = {}): ChatModel {
       }
 
       // id를 그대로 실어 보낸다 → addMessages가 같은 id를 교체로 처리한다(V8).
-      // 툴 호출이 없으면 `ai`가 키를 안 만들어, 기존 동작과 결과가 **완전히 같다**.
-      return ai(extractText(response), response.id, extractToolCalls(response));
+      // 툴 호출·usage는 응답에서 얻은 경우에만 선택 필드로 싣는다.
+      return ai(
+        extractText(response),
+        response.id,
+        extractToolCalls(response),
+        anthropicUsage(response.usage),
+      );
     },
   };
 }

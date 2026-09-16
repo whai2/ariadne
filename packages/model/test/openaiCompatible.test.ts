@@ -272,3 +272,17 @@ describe("openaiCompatible", () => {
     ]);
   });
 });
+
+test("OpenAI 사용량은 text/tool 모두 보존하고 캐시 상세를 중복 합산하지 않는다", async () => {
+  for (const response of [fakeResponse("ok"), fakeToolResponse("{}")]) {
+    response.usage = {
+      prompt_tokens: 30,
+      completion_tokens: 5,
+      total_tokens: 35,
+      prompt_tokens_details: { cached_tokens: 20 },
+    };
+    const { create } = recorder(response);
+    const model = openaiCompatible({ provider: "fake", model: "fake", create });
+    expect((await model.invoke([human("hi")])).usage).toEqual({ inputTokens: 30, outputTokens: 5 });
+  }
+});

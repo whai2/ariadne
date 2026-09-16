@@ -27,6 +27,7 @@ import {
 } from "@ariadne/core";
 import { ClaudeCodeError, EmptyConversationError, ToolsUnsupportedError } from "./errors";
 import type { ChatModel, ChatOptions, ToolSpec } from "./types";
+import { anthropicUsage } from "./usage";
 
 /** `claude -p --output-format json`이 내놓는 result 객체 중 우리가 보는 것만. */
 export interface ClaudeCodeResult {
@@ -35,6 +36,8 @@ export interface ClaudeCodeResult {
   is_error?: boolean;
   result?: string;
   total_cost_usd?: number;
+  /** CLI 호출 전체의 집계 사용량. 런타임에서 검증한다. */
+  usage?: unknown;
   session_id?: string;
 }
 
@@ -307,11 +310,18 @@ export function buildArgs(opts: { model?: string; system?: string }): string[] {
 
 /** stdout(JSON)에서 최종 텍스트를 꺼낸다. 실패는 이유를 담아 던진다. */
 export function parseResult(stdout: string): string {
+  return parseEnvelope(stdout).result;
+}
+
+function parseEnvelope(stdout: string): ClaudeCodeResult & { result: string } {
   let parsed: ClaudeCodeResult;
   try {
     parsed = JSON.parse(stdout) as ClaudeCodeResult;
   } catch {
     throw new ClaudeCodeError(`출력이 JSON이 아니다: ${stdout.slice(0, 200)}`);
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    throw new ClaudeCodeError("result 객체가 없다");
   }
   if (parsed.is_error === true || parsed.subtype !== "success") {
     throw new ClaudeCodeError(`실패 (${parsed.subtype ?? "unknown"})`);
@@ -319,7 +329,7 @@ export function parseResult(stdout: string): string {
   if (typeof parsed.result !== "string") {
     throw new ClaudeCodeError("result 필드가 없다");
   }
-  return parsed.result;
+  return { ...parsed, result: parsed.result };
 }
 
 /** 기본 실행자 — `claude`를 spawn하고 stdout을 모은다. 프롬프트는 stdin으로 넣는다. */
@@ -402,14 +412,16 @@ export function claudeCodeChat(config: ClaudeCodeConfig = {}): ChatModel {
         ...(system === "" ? {} : { system }),
       });
 
-      const out = parseResult(await run(args, prompt, options.signal));
+      const envelope = parseEnvelope(await run(args, prompt, options.signal));
+      const out = envelope.result;
+      const usage = anthropicUsage(envelope.usage);
 
       // 세션 id를 메시지 id로 쓰지 않는다 — 여러 턴이 같은 세션이면 addMessages가
       // 서로를 덮어쓴다(V8의 "같은 id면 교체"). id 없이 두면 항상 append다.
-      if (!wantsTools) return ai(out);
+      if (!wantsTools) return ai(out, undefined, undefined, usage);
       // 툴을 실었으면 텍스트를 toolCalls로 되살린다 — 없으면 그냥 최종 답(prose)이다.
       const { content, toolCalls } = parsePromptedToolCalls(out);
-      return ai(content, undefined, toolCalls);
+      return ai(content, undefined, toolCalls, usage);
     },
   };
 }

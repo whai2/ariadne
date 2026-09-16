@@ -1,6 +1,7 @@
 // superstep 루프 — Plan → Execute → Update를 활성 태스크가 없을 때까지 돌린다.
 // langgraph 대응: pregel/_loop.py + Pregel.stream().
 
+import { NodeExecutionError } from "../errors";
 import {
   applyWrites,
   checkpointChannels,
@@ -12,7 +13,14 @@ import {
   type Task,
 } from "./algo";
 import type { ChannelWriteEntry } from "./node";
-import type { ChannelCheckpoint, Channels, GraphView, PregelSpec, StepUpdate } from "./types";
+import type {
+  ChannelCheckpoint,
+  Channels,
+  GraphView,
+  PregelSpec,
+  StepUpdate,
+  TaskUpdate,
+} from "./types";
 
 /** 실행 옵션 (F5.2). */
 export interface StreamOptions {
@@ -52,17 +60,47 @@ export class CompiledGraph<S extends object> {
     task: Task<S>,
     snapshot: S,
     channels: Channels,
-  ): Promise<ChannelWriteEntry[]> {
-    const input = task.arg ? task.arg.value : snapshot;
-    const output = await task.node.bound(input as never);
+    step: number,
+    index: number,
+  ): Promise<{ writes: ChannelWriteEntry[]; update: TaskUpdate; error?: NodeExecutionError }> {
+    const id = `${step}:${index}`;
+    const startedAt = Date.now();
     const writes: ChannelWriteEntry[] = [];
-    for (const writer of task.node.writers) {
-      // writers는 순서대로 돈다 → 뒤의 라우터는 앞의 상태 쓰기를 로컬 읽기로 본다.
-      writes.push(
-        ...(await writer(output, () => localRead<S>(channels, this.spec.controlChannels, writes))),
-      );
+    let error: NodeExecutionError | undefined;
+    try {
+      const input = task.arg ? task.arg.value : snapshot;
+      const output = await task.node.bound(input as never);
+      // 뒤의 라우터는 앞 writer의 쓰기를 로컬 읽기로 본다.
+      for (const writer of task.node.writers) {
+        writes.push(
+          ...(await writer(output, () =>
+            localRead<S>(channels, this.spec.controlChannels, writes),
+          )),
+        );
+      }
+    } catch (cause) {
+      error = new NodeExecutionError(task.name, step, id, cause);
     }
-    return writes;
+    const cause = error?.cause;
+    return {
+      writes,
+      ...(error === undefined ? {} : { error }),
+      update: {
+        id,
+        name: task.name,
+        startedAt,
+        endedAt: Date.now(),
+        writes: writes.filter((w) => !this.spec.controlChannels.has(w.channel)),
+        ...(error === undefined
+          ? {}
+          : {
+              error: {
+                name: cause instanceof Error ? cause.name : "Error",
+                message: cause instanceof Error ? cause.message : String(cause),
+              },
+            }),
+      },
+    };
   }
 
   /**
@@ -119,8 +157,23 @@ export class CompiledGraph<S extends object> {
       // Execute: PULL은 같은 스냅샷을, PUSH는 자기 payload를 입력으로 병렬 실행. 쓰기는 버퍼.
       const snapshot = readChannels<S>(channels, controlChannels);
       const buffered = await Promise.all(
-        tasks.map((task) => this.runTask(task, snapshot, channels)),
+        tasks.map((task, index) => this.runTask(task, snapshot, channels, step, index)),
       );
+
+      // 형제 태스크까지 정산한 뒤 실패를 관찰시킨다. 어느 쓰기도 반영하지 않는다.
+      const failure = buffered.find((result) => result.error !== undefined)?.error;
+      if (failure !== undefined) {
+        yield {
+          step,
+          nodes: tasks.map((t) => t.name),
+          tasks: buffered.map((r) => r.update),
+          committed: false,
+          state: snapshot,
+          channels: snapshotChannels(channels, controlChannels),
+          checkpoint: checkpointChannels(channels, controlChannels),
+        };
+        throw failure;
+      }
 
       // Update: 먼저 읽은 트리거를 consume(배리어 리셋), 그 다음 쓰기 반영, 마지막에 만료 스윕.
       // consume이 쓰기보다 **먼저**라야 자기 트리거를 다시 쓰는 노드(자기 루프)가 안 죽는다.
@@ -129,12 +182,17 @@ export class CompiledGraph<S extends object> {
           channels.get(trigger)?.consume();
         }
       }
-      const updated = applyWrites(channels, buffered.flat());
+      const updated = applyWrites(
+        channels,
+        buffered.flatMap((r) => r.writes),
+      );
       expireStale(channels, updated);
 
       yield {
         step,
         nodes: tasks.map((t) => t.name),
+        tasks: buffered.map((r) => r.update),
+        committed: true,
         state: readChannels<S>(channels, controlChannels),
         channels: snapshotChannels(channels, controlChannels),
         checkpoint: checkpointChannels(channels, controlChannels),

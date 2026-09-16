@@ -432,20 +432,21 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 
 ### F6 · 관측 — 트레이스는 우리가 만들고, 이름표만 빌린다
 
-#### F6.1 · 트레이스가 요구하는 것 셋 — core의 최소 확장
-- **무엇:** ① `StepUpdate.tasks: TaskUpdate[]`(`{ name, startedAt, endedAt, writes, error? }`, `nodes`는 남긴다) ② `runTask`를 try/catch로 감싸 **실패 태스크도 yield에 실린 뒤** 던진다(에러는 계속 던진다 — 삼키면 거짓말이다) + `NodeExecutionError` ③ `AIMessage.usage?: { inputTokens, outputTokens }` + 어댑터 셋이 **버리던 usage를 채운다**.
-- **셋 다 이미 손에 있는 정보다.** `buffered` 쓰기는 `applyWrites` 직후 버려지고, usage는 어댑터가 파싱해놓고 버린다. **계산 추가 0** — deps 0도 성능도 안 건드린다.
+#### F6.1 · 트레이스가 요구하는 것 셋 — core의 최소 확장 ✅
+- **무엇:** ① `StepUpdate.tasks: TaskUpdate[]`(`{ id, name, startedAt, endedAt, writes, error? }`, `nodes`는 남긴다) + `committed`(태스크 실패 시 쓰기 미반영) ② `runTask`를 try/catch로 감싸 **실패 태스크도 yield에 실린 뒤** 던진다(에러는 계속 던진다 — 삼키면 거짓말이다) + `NodeExecutionError` ③ `AIMessage.usage?: { inputTokens, outputTokens }` + 어댑터 셋이 **버리던 usage를 채운다**.
+- **셋 다 이미 손에 있는 정보다.** `buffered` 쓰기는 `applyWrites` 직후 버려지고, usage는 어댑터가 파싱해놓고 버린다. 시각 기록·태스크별 결과 수집은 추가하지만 **core 런타임 deps 0**을 유지한다.
 - **오늘 없는 것 셋:** 시간이 없다 · **노드 귀속이 없다**(한 스텝에 두 노드가 돌면 `state`는 이미 합쳐진 결과라 누가 뭘 썼는지 모른다) · **실패가 안 남는다**(노드가 던지면 그 스텝의 yield 자체가 사라진다 — **가장 값진 트레이스인 실패 트레이스가 통째로 없다**).
 - **`usage`가 core인 근거:** F2.2의 규칙 그대로 — **"채널에 사는 것만 core에 둔다."** usage는 AI 메시지에 실려 다닌다. 단가표는 링이고, 레지스트리에 단가가 없으므로 **비용($)은 안 만든다 — 토큰까지가 정직한 선이다.**
 - **안 하는 것:** core에 콜백/훅 인터페이스(`onNodeStart` 등)를 **넣지 않는다 — yield가 이미 훅이다.** 스팬·traceId·샘플링·전송은 전부 링.
-- **검증:** 던지는 노드가 있는 그래프에서 `stream`이 **그 스텝을 yield한 뒤** 던진다. 한 스텝 두 노드 병렬에서 `tasks[i].writes`로 누가 무엇을 썼는지 갈린다. 가짜 어댑터로 usage 전달.
+- **검증:** 던지는 노드가 있는 그래프에서 `stream`이 **그 스텝을 yield한 뒤** 던진다. 한 스텝 두 노드 병렬에서 `tasks[i].writes`로 누가 무엇을 썼는지 갈린다. 가짜 어댑터로 usage 전달·캐시 합산·미보고/0 구분. 분석·후속 설계: [36-f6_1-observability.md](notes/36-f6_1-observability.md).
 - **벽 → 다음:** 스텝 배열은 있는데 **계층이 없다.** run > superstep > node > 모델호출 > 툴호출의 중첩을 core는 볼 수 없다 — 모델·툴 호출은 `bound` 안에서 일어난다.
 
 #### F6.2 · `@ariadne/observability` — 스팬 트리를 우리가 만든다
 - **새 패키지. 런타임 deps 0** (core·memory 다음 **세 번째**). `observability → core`(타입만). **`model`·`tools`를 모른다** — 계측은 감싸기로 하고, **감싸는 쪽이** 그 둘을 안다.
 - **무엇:** `span.ts`(`Span { traceId, spanId, parentId, name, startedAt, endedAt, attributes, status }` + hex id 생성) · `graph.ts`(`StepUpdate.tasks` → superstep/node 스팬) · `model.ts`(`traced(model)` → `chat {model}` 스팬) · `tools.ts`(`execute_tool {name}`) · `collector.ts`.
 - **어휘만 빌린다 — 구현은 우리가 한다.** OpenTelemetry GenAI semantic conventions에서 `gen_ai.operation.name` · `gen_ai.provider.name` · `gen_ai.request.model` · `gen_ai.usage.*` · `gen_ai.tool.name`만 가져온다. **우리 것은 `ariadne.*`** — `ariadne.superstep` · `ariadne.node` · `ariadne.channel.writes`.
-- **예상되는 관찰:** **GenAI semconv에 "superstep"이 없다.** 그래프 실행이라는 계층이 표준에 아직 없기 때문이고, 그래서 남의 UI에 실으면 **한 층이 납작해진다.** 그게 우리가 자체 뷰를 갖는 이유의 근거가 된다.
+- **superstep은 사용자 정의 계층으로 보존한다.** `ariadne.*` span도 부모관계를 실으면 외부 trace tree에서 표현할 수 있다. 자체 UI의 가치는 계층 유무보다 그래프·채널 쓰기와 연결한 설명이다.
+- **선행 설계 과제(F6.1에서 발견):** 완료 후 `StepUpdate`만으로 병렬 model/tool 호출의 부모를 정할 수 없다. 실행 전 명시 컨텍스트 전달과 task ID 연결을 먼저 검증한다. 링의 node wrapper를 우선 검토하며, 시각 겹침으로 부모를 추정하지 않는다.
 - **이 단계의 발견(예상):** 계측 지점이 정확히 둘로 갈린다 — **엔진은 yield로 관찰되고, 링은 감싸기로 관찰된다.**
 - **안 하는 것:** OTel SDK 의존 · OTLP 전송 · Langfuse 연동(**참고 자료로만 쓴다**) · `AsyncLocalStorage`(부모 스팬은 **명시 인자**로 넘긴다 — 감춘 전역은 학습을 막는다) · 샘플링·배치.
 - **검증:** ReAct 3라운드 run에서 스팬 트리의 깊이·부모관계·개수가 정확. 실패 run에서 스팬이 `status: "error"`로 **닫힌다**(열린 채 안 남는다).

@@ -44,6 +44,11 @@ export interface BaseMessage {
 export interface HumanMessage extends BaseMessage {
   role: "human";
 }
+/** 프로바이더가 보고한 사용량. 입력은 캐시 읽기·쓰기를 포함한 총 토큰. */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
 export interface AIMessage extends BaseMessage {
   role: "ai";
   /**
@@ -55,6 +60,8 @@ export interface AIMessage extends BaseMessage {
    * 필요해지면 그때 `content`를 넓힌다.
    */
   toolCalls?: ToolCall[];
+  /** 보고되지 않은 사용량은 0이 아니라 필드 없음이다. */
+  usage?: TokenUsage;
 }
 export interface SystemMessage extends BaseMessage {
   role: "system";
@@ -87,11 +94,17 @@ export function human(content: string, id?: string): HumanMessage {
  * 툴을 안 쓰는 기존 코드/테스트가 `ai("답")`을 `{role, content}`와 통째로 비교하고 있어서,
  * 빈 배열이라도 실으면 전부 깨진다.
  */
-export function ai(content: string, id?: string, toolCalls?: ToolCall[]): AIMessage {
+export function ai(
+  content: string,
+  id?: string,
+  toolCalls?: ToolCall[],
+  usage?: TokenUsage,
+): AIMessage {
   return {
     role: "ai",
     content,
     ...(id === undefined ? {} : { id }),
+    ...(usage === undefined ? {} : { usage }),
     ...(toolCalls === undefined || toolCalls.length === 0 ? {} : { toolCalls }),
   };
 }

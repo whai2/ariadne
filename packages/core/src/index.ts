@@ -14,7 +14,7 @@ export { LastValue } from "./channels/lastValue";
 export { NamedBarrierValue } from "./channels/namedBarrier";
 export { Topic } from "./channels/topic";
 export { branchTo, END, joinTo, START, TASKS } from "./constants";
-export { EmptyChannelError, InvalidUpdateError } from "./errors";
+export { EmptyChannelError, InvalidUpdateError, NodeExecutionError } from "./errors";
 export type {
   AIMessage,
   BaseMessage,
@@ -27,6 +27,7 @@ export type {
   RouteTarget,
   StateSchema,
   SystemMessage,
+  TokenUsage,
   ToolCall,
   ToolMessage,
 } from "./graph";
@@ -53,6 +54,7 @@ export type {
   PregelSpec,
   StepUpdate,
   StreamOptions,
+  TaskUpdate,
   Writer,
 } from "./pregel";
 export { CompiledGraph } from "./pregel";

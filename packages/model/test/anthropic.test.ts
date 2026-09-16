@@ -188,7 +188,12 @@ describe("anthropicChat.invoke", () => {
 
     const result = await model.invoke([human("2+2는?")]);
 
-    expect(result).toEqual({ role: "ai", content: "4입니다", id: "msg_abc" });
+    expect(result).toEqual({
+      role: "ai",
+      content: "4입니다",
+      id: "msg_abc",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
     expect(model.provider).toBe("anthropic");
     expect(model.modelId).toBe("claude-opus-5");
   });
@@ -312,6 +317,7 @@ describe("anthropicChat.invoke", () => {
       role: "ai",
       content: "",
       id: "msg_t",
+      usage: { inputTokens: 1, outputTokens: 1 },
       toolCalls: [{ id: "call_1", name: "add", args: { a: 3, b: 4 } }],
     });
   });
@@ -331,7 +337,7 @@ describe("그래프에 꽂기 — 모델 링이 core 위에 얹힌다", () => {
 
     expect(out.messages).toEqual([
       { role: "human", content: "2+2는?" },
-      { role: "ai", content: "4입니다", id: "msg_1" },
+      ai("4입니다", "msg_1", undefined, { inputTokens: 1, outputTokens: 1 }),
     ]);
   });
 
@@ -429,4 +435,20 @@ describe.skipIf(!hasKey)("실제 Claude 호출 (ANTHROPIC_API_KEY 있을 때만)
     expect(result.role).toBe("ai");
     expect(result.content.length).toBeGreaterThan(0);
   }, 60_000);
+});
+
+test("캐시 읽기·쓰기까지 입력 사용량으로 보존한다", async () => {
+  const response = fakeResponse("ok");
+  response.usage = {
+    ...response.usage,
+    input_tokens: 3,
+    output_tokens: 7,
+    cache_creation_input_tokens: 10,
+    cache_read_input_tokens: 20,
+  };
+  const { create } = recorder(response);
+  expect((await anthropicChat({ create }).invoke([human("hi")])).usage).toEqual({
+    inputTokens: 33,
+    outputTokens: 7,
+  });
 });

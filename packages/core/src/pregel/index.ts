@@ -24,4 +24,5 @@ export type {
   GraphView,
   PregelSpec,
   StepUpdate,
+  TaskUpdate,
 } from "./types";

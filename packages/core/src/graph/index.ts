@@ -10,6 +10,7 @@ export type {
   HumanMessage,
   MessagesState,
   SystemMessage,
+  TokenUsage,
   ToolCall,
   ToolMessage,
 } from "./messages";

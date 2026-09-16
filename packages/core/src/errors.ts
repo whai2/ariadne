@@ -20,3 +20,19 @@ export class InvalidUpdateError extends Error {
     this.name = "InvalidUpdateError";
   }
 }
+
+/** 노드 본문 또는 writer 실패. 원래 예외는 cause에 보존한다. */
+export class NodeExecutionError extends Error {
+  constructor(
+    readonly node: string,
+    readonly step: number,
+    readonly taskId: string,
+    cause: unknown,
+  ) {
+    super(
+      `노드 '${node}' 실행 실패 (step ${step}, task ${taskId}): ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "NodeExecutionError";
+  }
+}

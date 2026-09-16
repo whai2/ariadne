@@ -2,7 +2,7 @@
 // **graph/를 import하지 않는다**: 엔진은 StateGraph도 Command도 모른다.
 
 import type { BaseChannel } from "../channels/base";
-import type { PregelNode, Writer } from "./node";
+import type { ChannelWriteEntry, PregelNode, Writer } from "./node";
 
 /** 채널 맵. 상태 채널 + 제어 채널(트리거·배리어·TASKS)이 한 그릇에 산다. */
 export type Channels = Map<string, BaseChannel>;
@@ -70,16 +70,33 @@ export interface ChannelSnapshot {
   value?: unknown;
 }
 
+/** 한 태스크의 실행 사실. 값은 복제하지 않으므로 관찰자는 읽기 전용으로 취급한다. */
+export interface TaskUpdate {
+  /** run 안에서만 유일한 step:index. 같은 노드에 여러 Send가 와도 구분된다. */
+  id: string;
+  name: string;
+  /** Unix epoch 밀리초. 노드 본문과 writers 실행을 포함한다. */
+  startedAt: number;
+  endedAt: number;
+  /** 제어 채널을 제외한 리듀서 적용 전 쓰기. committed=false면 반영되지 않았다. */
+  writes: ChannelWriteEntry[];
+  /** JSON으로도 남는 원래 예외 요약. 원본 cause는 던지는 NodeExecutionError에 있다. */
+  error?: { name: string; message: string };
+}
+
 /** 한 superstep 실행 결과: 그 스텝에 (병렬로) 실행된 노드들 + 직후 상태/채널. langgraph 대응: stream(). */
 export interface StepUpdate<S> {
   /** superstep 번호(0부터). */
   step: number;
   /** 이 superstep에 병렬 실행된 노드들. */
   nodes: string[];
+  tasks: TaskUpdate[];
+  /** false면 Execute 실패이며 state/channels/checkpoint는 쓰기 반영 전이다. */
+  committed: boolean;
   state: S;
   channels: ChannelSnapshot[];
   /**
-   * 이 스텝 직후의 실행 상태 (F5.2). `channels`와 같은 순간을 두 독자에게 말한다 —
+   * 이 스텝의 실행 상태 (F5.2; committed=false면 쓰기 반영 전). `channels`와 같은 순간을 두 독자에게 말한다 —
    * 저쪽은 **사람**(Studio 패널), 이쪽은 **기계**(다음 run이 되받을 값).
    */
   checkpoint: ChannelCheckpoint;
