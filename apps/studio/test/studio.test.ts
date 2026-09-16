@@ -6,6 +6,29 @@ import { createStudio } from "../src/studio";
 
 /** 저장소 없이 뜬 스튜디오. **메모리가 없어도 그냥 돈다**는 게 계약이다. */
 const studio = createStudio();
+afterAll(() => studio.close());
+
+async function start(s = studio): Promise<string> {
+  const res = await s.fetch(
+    new Request("http://x/api/threads", {
+      method: "POST",
+      body: JSON.stringify({ agentId: "mcp" }),
+    }),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { id: string }).id;
+}
+function postTurn(s: ReturnType<typeof createStudio>, id: string, input: unknown) {
+  return s.fetch(
+    new Request(`http://x/api/threads/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  );
+}
+async function firstTurn(s: ReturnType<typeof createStudio>, text: string) {
+  return postTurn(s, await start(s), { message: text });
+}
 
 /** 구독 자격증명이 있나 — 진짜 모델을 부르는 블록은 이게 없으면 통째로 건너뛴다. */
 const hasCli = Bun.spawnSync(["which", "claude"]).exitCode === 0;
@@ -67,7 +90,7 @@ describe("Agents (사이드바) — S9", () => {
     expect(res.status).toBe(404);
   });
 
-  it("POST /api/agents/chat 은 messages가 없으면 400", async () => {
+  it("기존 POST /api/agents/chat은 제거됐다", async () => {
     const res = await studio.fetch(
       new Request("http://x/api/agents/chat", {
         method: "POST",
@@ -75,11 +98,11 @@ describe("Agents (사이드바) — S9", () => {
         body: JSON.stringify({ id: "mcp", messages: [] }),
       }),
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
   });
 
   // (사이드바·에이전트 상세는 web/src의 React 컴포넌트다 — DOM 문자열 검사 대신
-  //  서버 계약(/api/agents, /api/agents/graph, /api/agents/chat)을 위에서 검사한다.)
+  //  서버 계약(/api/agents, /api/agents/graph, /api/threads)을 위에서 검사한다.)
 });
 
 // MCP 에이전트는 **진짜 서버를 띄운다**(자식 프로세스 + JSON-RPC). 네트워크 0.
@@ -153,8 +176,7 @@ describe("MCP 에이전트 — 툴이 외부 서버에서 온다 (F3.2)", () => 
 });
 
 // 승인 게이트가 스튜디오 계약으로 드러나는가 (S12 / F3.3).
-// **서버가 상태를 안 든다** — 재개는 같은 엔드포인트에 `decision` 한 글자를 더 싣는 것뿐이라,
-// 여기서 검사할 건 "무엇이 응답에 실리는가"와 "그래프 모양이 갈리는가" 둘이다.
+// F5.4에서는 서버가 상태를 소유한다. 승인 정책과 그래프 구조는 그대로 유지한다.
 describe("승인 게이트 — 스튜디오 계약 (F3.3)", () => {
   let closeMcp: () => Promise<void>;
 
@@ -223,14 +245,9 @@ describe("승인 게이트 — 스튜디오 계약 (F3.3)", () => {
   });
 
   it("decision은 allow/deny만 받는다 — 'ask'는 클라이언트가 보낼 수 없다", async () => {
-    const post = (body: unknown) =>
-      studio.fetch(
-        new Request("http://x/api/agents/chat", { method: "POST", body: JSON.stringify(body) }),
-      );
-    const messages = [{ role: "human", content: "안녕" }];
-    // 사람에게 묻겠다는 뜻인데 요청을 보낸 쪽이 이미 사람이라, 받으면 무한 왕복이 된다.
-    expect((await post({ id: "mcp", messages, decision: "ask" })).status).toBe(400);
-    expect((await post({ id: "mcp", messages, decision: "무엇" })).status).toBe(400);
+    const id = await start();
+    expect((await postTurn(studio, id, { decision: "ask" })).status).toBe(400);
+    expect((await postTurn(studio, id, { decision: "무엇" })).status).toBe(400);
   });
 });
 
@@ -245,20 +262,12 @@ describe.skipIf(!hasCli)("승인 게이트 → 진짜 모델로 멈춤·재개 (
     await closeMcp();
   });
 
-  function turn(messages: unknown[], decision?: string) {
-    return studio.fetch(
-      new Request("http://x/api/agents/chat", {
-        method: "POST",
-        body: JSON.stringify({ id: "mcp", messages, decision }),
-      }),
-    );
-  }
-
   it("쓰기 툴 앞에서 멈추고, 승인하면 이어 돈다", async () => {
     const first = [
       { role: "human", content: "'회의록'이라는 제목으로 '내일 3시'라고 메모 저장해줘" },
     ];
-    const paused = (await (await turn(first)).json()) as {
+    const id = await start();
+    const paused = (await (await postTurn(studio, id, { message: first[0]?.content })).json()) as {
       messages: Array<Record<string, unknown>>;
       pending: Array<{ name: string }>;
     };
@@ -268,9 +277,8 @@ describe.skipIf(!hasCli)("승인 게이트 → 진짜 모델로 멈춤·재개 (
     // 툴 결과 메시지는 하나도 없다 — 아직 아무 일도 안 일어났다.
     expect(paused.messages.some((m) => m.role === "tool")).toBe(false);
 
-    // 재개: **같은 엔드포인트**에 이력 + decision 한 글자.
-    const history = [...first, ...paused.messages];
-    const resumed = (await (await turn(history, "allow")).json()) as {
+    // 재개: 같은 thread에 승인 결정만 전달한다.
+    const resumed = (await (await postTurn(studio, id, { decision: "allow" })).json()) as {
       messages: Array<Record<string, unknown>>;
       steps: Array<{ nodes: string[] }>;
       pending: unknown[];
@@ -284,13 +292,14 @@ describe.skipIf(!hasCli)("승인 게이트 → 진짜 모델로 멈춤·재개 (
 
   it("거부하면 툴은 안 돌고 모델이 다른 길을 찾는다", async () => {
     const first = [{ role: "human", content: "'메모'라는 제목으로 '테스트'라고 저장해줘" }];
-    const paused = (await (await turn(first)).json()) as {
+    const id = await start();
+    const paused = (await (await postTurn(studio, id, { message: first[0]?.content })).json()) as {
       messages: Array<Record<string, unknown>>;
       pending: Array<{ name: string }>;
     };
     expect(paused.pending.length).toBeGreaterThan(0);
 
-    const denied = (await (await turn([...first, ...paused.messages], "deny")).json()) as {
+    const denied = (await (await postTurn(studio, id, { decision: "deny" })).json()) as {
       messages: Array<Record<string, unknown>>;
       pending: unknown[];
     };
@@ -354,12 +363,7 @@ describe("메모리 기록 — 겪은 일과 가치 신호 (F4.1)", () => {
 
     // 모델이 없어도(자격증명 없음) 에피소드는 열리고 **finally가 닫는다** —
     // 실패한 run이 running으로 남으면 관찰이 거짓말이 된다.
-    await withMemory.fetch(
-      new Request("http://x/api/agents/chat", {
-        method: "POST",
-        body: JSON.stringify({ id: "mcp", messages: [{ role: "human", content: "안녕" }] }),
-      }),
-    );
+    await firstTurn(withMemory, "안녕");
     const after = (await (
       await withMemory.fetch(new Request("http://x/api/memory?agent=mcp"))
     ).json()) as {
@@ -389,16 +393,10 @@ describe.skipIf(!hasCli)("메모리 기록 → 진짜 모델 (구독 자격증�
   it("멈춤과 재개가 **에피소드 두 행**으로 남고 그 사이에 deny가 하나 낀다", async () => {
     const memory = MemoryStore.open();
     const s = createStudio(memory);
-    const turn = (messages: unknown[], decision?: string) =>
-      s.fetch(
-        new Request("http://x/api/agents/chat", {
-          method: "POST",
-          body: JSON.stringify({ id: "mcp", messages, decision }),
-        }),
-      );
+    const id = await start(s);
 
     const first = [{ role: "human", content: "'회의'라는 제목으로 '3시'라고 메모 저장해줘" }];
-    const paused = (await (await turn(first)).json()) as {
+    const paused = (await (await postTurn(s, id, { message: first[0]?.content })).json()) as {
       messages: unknown[];
       pending: Array<{ name: string }>;
     };
@@ -413,12 +411,12 @@ describe.skipIf(!hasCli)("메모리 기록 → 진짜 모델 (구독 자격증�
     expect(mem.events).toEqual([]);
 
     // 거부로 재개 — **새 에피소드**가 되고, 그 안에서 사람의 결정이 기록된다.
-    await turn([...first, ...paused.messages], "deny");
+    await postTurn(s, id, { decision: "deny" });
     mem = (await (
       await s.fetch(new Request("http://x/api/memory?agent=mcp"))
     ).json()) as typeof mem;
 
-    expect(mem.episodes.length).toBe(2); // 서버는 두 run을 잇지 않는다
+    expect(mem.episodes.length).toBe(2); // 같은 thread의 실행도 에피소드는 run마다 남는다
     expect(mem.episodes[0]?.status).toBe("completed"); // 최신순 — 재개 턴은 끝까지 갔다
     expect(mem.events.map((e) => [e.kind, e.target])).toEqual([["deny", "write_note"]]);
     memory.close();
@@ -540,12 +538,7 @@ describe("선택 기계 — 쓰이는 것이 남는다 (F4.3)", () => {
   it("주입한 턴이 시행으로 남는다 — 모델 없이도 계약이 보인다", async () => {
     const memory = seeded();
     const s = createStudio(memory);
-    await s.fetch(
-      new Request("http://x/api/agents/chat", {
-        method: "POST",
-        body: JSON.stringify({ id: "mcp", messages: [{ role: "human", content: "안녕" }] }),
-      }),
-    );
+    await firstTurn(s, "안녕");
     // 모델이 있든(진짜 호출) 없든(던짐) 에피소드는 닫힌다. 시행은 **끝까지 돈 경우에만** 센다.
     const total = memory.scoredFacts("mcp").reduce((n, f) => n + f.trials, 0);
     expect(total).toBeLessThanOrEqual(1);
@@ -575,12 +568,7 @@ describe("메모리 뷰 — 주입이 관찰된다 (S13)", () => {
   }
 
   async function turn(s: ReturnType<typeof createStudio>, text: string) {
-    const res = await s.fetch(
-      new Request("http://x/api/agents/chat", {
-        method: "POST",
-        body: JSON.stringify({ id: "mcp", messages: [{ role: "human", content: text }] }),
-      }),
-    );
+    const res = await firstTurn(s, text);
     return (await res.json()) as {
       injected?: { fact: ScoredFact; outcome: string | null };
       error?: string;
@@ -622,12 +610,17 @@ describe("메모리 뷰 — 주입이 관찰된다 (S13)", () => {
   );
 
   it("스토어가 없어도 응답에 injected가 없다 — 메모리 없이도 그냥 돈다는 계약", async () => {
-    const body = await turn(createStudio(), "안녕");
-    expect("injected" in body).toBe(false);
+    const temporary = createStudio();
+    try {
+      const body = await turn(temporary, "안녕");
+      expect("injected" in body).toBe(false);
+    } finally {
+      temporary.close();
+    }
   }, 120_000);
 });
 
-describe("체크포인트 — 클라이언트가 쥐는 것이 이력에서 상태로 (F5.2)", () => {
+describe("체크포인트 — 예산 스키마 (F5.2)", () => {
   let closeMcp: () => Promise<void>;
 
   beforeAll(async () => {
@@ -636,11 +629,6 @@ describe("체크포인트 — 클라이언트가 쥐는 것이 이력에서 상�
   afterAll(async () => {
     await closeMcp();
   });
-
-  const post = (body: unknown) =>
-    studio.fetch(
-      new Request("http://x/api/agents/chat", { method: "POST", body: JSON.stringify(body) }),
-    );
 
   it("예산 선언이 목록에 실리고, 그래프에 채널로 낮춰진다", async () => {
     const list = (await (await studio.fetch(new Request("http://x/api/agents"))).json()) as Array<{
@@ -657,8 +645,8 @@ describe("체크포인트 — 클라이언트가 쥐는 것이 이력에서 상�
     expect(buildAgentGraph(mcpDef, true).getChannelNames()).toContain("budget");
   });
 
-  it("체크포인트가 없으면 빈 입력은 여전히 거절된다 — 예전 규약은 그대로", async () => {
-    expect((await post({ id: "mcp", messages: [] })).status).toBe(400);
+  it("빈 메시지는 thread가 있어도 거절된다", async () => {
+    expect((await postTurn(studio, await start(), { message: "" })).status).toBe(400);
   });
 });
 
@@ -676,63 +664,34 @@ describe.skipIf(!hasCli)("체크포인트 → 진짜 모델 (구독 자격증명
     messages: Array<{ role: string; content: string }>;
     steps: Array<{ nodes: string[] }>;
     pending: Array<{ name: string }>;
-    checkpoint?: { budget?: number; messages?: unknown[] };
+    thread: { state: { budget?: number }; messages: unknown[] };
     error?: string;
   }
-  const chat = async (body: unknown): Promise<Reply> =>
-    (await (
-      await studio.fetch(
-        new Request("http://x/api/agents/chat", { method: "POST", body: JSON.stringify(body) }),
-      )
-    ).json()) as Reply;
+  const chat = async (id: string, input: unknown): Promise<Reply> =>
+    (await (await postTurn(studio, id, input)).json()) as Reply;
 
-  it("켜면 예산이 누적되고, 끄면 매 턴 리셋된다 — 대화는 둘 다 이어지는데", async () => {
-    // 켬 — 새 메시지만 보내고 체크포인트를 되돌려준다.
-    let cp: Reply["checkpoint"];
-    const withCp: number[] = [];
+  it("같은 thread의 예산은 누적되고 새 thread는 초기 예산으로 시작한다", async () => {
+    const id = await start();
+    const budgets: number[] = [];
     for (const text of ["서울 날씨", "부산은?"]) {
-      const r = await chat({
-        id: "mcp",
-        messages: [{ role: "human", content: text }],
-        checkpoint: cp,
-      });
-      expect(r.error).toBeUndefined();
-      cp = r.checkpoint;
-      withCp.push(cp?.budget ?? Number.NaN);
+      const reply = await chat(id, { message: text });
+      expect(reply.error).toBeUndefined();
+      budgets.push(reply.thread.state.budget ?? Number.NaN);
     }
-    expect(withCp).toEqual([4, 3]);
-
-    // 끔 — 이력 전체를 보낸다. 대화는 이어지지만 예산은 늘 초기값에서 다시 시작한다.
-    let convo: Array<{ role: string; content: string }> = [];
-    const withoutCp: number[] = [];
-    for (const text of ["서울 날씨", "부산은?"]) {
-      convo = [...convo, { role: "human", content: text }];
-      const r = await chat({ id: "mcp", messages: convo });
-      convo = [...convo, ...r.messages];
-      withoutCp.push(r.checkpoint?.budget ?? Number.NaN);
-    }
-    expect(withoutCp).toEqual([4, 4]);
+    expect(budgets).toEqual([4, 3]);
+    const fresh = await chat(await start(), { message: "서울 날씨" });
+    expect(fresh.thread.state.budget).toBe(4);
   }, 180_000);
 
-  it("승인 재개는 빈 입력으로 된다 — 이력은 복원에서 온다", async () => {
-    const paused = await chat({
-      id: "mcp",
-      messages: [{ role: "human", content: "'장보기: 우유'라고 메모 저장해줘" }],
-    });
+  it("승인 재개는 결정만 보낸다 — 이력은 서버에서 복원한다", async () => {
+    const id = await start();
+    const paused = await chat(id, { message: "'장보기: 우유'라고 메모 저장해줘" });
     expect(paused.pending.map((c) => c.name)).toEqual(["write_note"]);
-
-    // 새로 보낼 말이 없다. 입력 [] + 체크포인트 + 결정.
-    const resumed = await chat({
-      id: "mcp",
-      messages: [],
-      decision: "allow",
-      checkpoint: paused.checkpoint,
-    });
+    const resumed = await chat(id, { decision: "allow" });
     expect(resumed.error).toBeUndefined();
-    expect(resumed.steps[0]?.nodes).toEqual(["tools"]); // model이 아니라 tools부터
+    expect(resumed.steps[0]?.nodes).toEqual(["tools"]);
     expect(resumed.pending).toEqual([]);
-    // 응답엔 **새로 생긴 것만** — 복원된 이력은 안 되돌려준다.
     expect(resumed.messages.length).toBe(2);
-    expect(resumed.checkpoint?.budget).toBe(3);
+    expect(resumed.thread.state.budget).toBe(3);
   }, 180_000);
 });

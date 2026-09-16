@@ -15,7 +15,7 @@ export type CheckpointStore = Pick<MemoryStore, "getLatest" | "putCheckpoints">;
  * 대상으로 한다(createAgent는 항상 해당한다). 0스텝 그래프는 저장 없이 명시적으로 거부한다.
  */
 export async function runWithCheckpoint<S extends object>(
-  graph: CompiledGraph<S>,
+  graph: Pick<CompiledGraph<S>, "stream">,
   threadId: string,
   input: Partial<S>,
   store: CheckpointStore,

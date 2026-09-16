@@ -107,32 +107,69 @@ export interface Reply {
   steps: StepUpdate[];
   pending?: ToolCall[];
   injected?: Injected;
-  /** 이 턴이 끝난 자리의 실행 상태. 다음 턴에 그대로 되돌려주면 이어진다. */
-  checkpoint?: Checkpoint;
+  thread: ThreadView;
   error?: string;
 }
 
+export interface ThreadView {
+  id: string;
+  agentId: string;
+  createdAt: number;
+  messages: Message[];
+  pending: ToolCall[];
+  state: Checkpoint;
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+async function responseJSON<T>(res: Response): Promise<T> {
+  const value = await res.json();
+  if (!res.ok) throw new ApiError(value.error ?? `요청 실패 (${res.status})`, res.status);
+  return value as T;
+}
 async function getJSON<T>(path: string): Promise<T> {
-  return (await fetch(path)).json() as Promise<T>;
+  return responseJSON<T>(await fetch(path));
 }
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return res.json() as Promise<T>;
+  return responseJSON<T>(
+    await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 export const api = {
   agents: () => getJSON<AgentInfo[]>("/api/agents"),
   agentGraph: (id: string) =>
     getJSON<GraphView | { error: string }>(`/api/agents/graph?id=${encodeURIComponent(id)}`),
-  agentChat: (
-    id: string,
-    messages: Message[],
-    decision?: "allow" | "deny",
-    checkpoint?: Checkpoint,
-  ) => postJSON<Reply>("/api/agents/chat", { id, messages, decision, checkpoint }),
+  createThread: (agentId: string) => postJSON<ThreadView>("/api/threads", { agentId }),
+  thread: (id: string) => getJSON<ThreadView>(`/api/threads/${encodeURIComponent(id)}`),
+  send: (id: string, input: { message: string } | { decision: "allow" | "deny" }) =>
+    postJSON<Reply>(`/api/threads/${encodeURIComponent(id)}/messages`, input),
   memory: (agent: string) => getJSON<MemoryView>(`/api/memory?agent=${encodeURIComponent(agent)}`),
 };
+
+// 브라우저에는 화면 선택에 필요한 ID만 남긴다. 상태와 이력은 서버에서 읽는다.
+export function readSelection(key: string): string | null {
+  try {
+    return localStorage.getItem(`ariadne:v1:${key}`);
+  } catch {
+    return null;
+  }
+}
+export function saveSelection(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(`ariadne:v1:${key}`);
+    else localStorage.setItem(`ariadne:v1:${key}`, value);
+  } catch {
+    /* 저장소가 막혀도 현재 탭에서 대화할 수 있다. */
+  }
+}

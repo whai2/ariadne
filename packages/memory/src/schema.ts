@@ -156,6 +156,12 @@ CREATE TABLE IF NOT EXISTS injections (
 
 CREATE INDEX IF NOT EXISTS injections_fact ON injections(fact_id);
 
+CREATE TABLE IF NOT EXISTS threads (
+  id TEXT PRIMARY KEY NOT NULL,
+  agent TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS checkpoints (
   thread_id            TEXT    NOT NULL,
   checkpoint_ns        TEXT    NOT NULL DEFAULT '',

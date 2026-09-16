@@ -1,5 +1,11 @@
-import { pendingToolCalls } from "@ariadne/agent";
-import type { BaseMessage, MessagesState, StepUpdate, ToolCall } from "@ariadne/core";
+import { pendingToolCalls, runWithCheckpoint } from "@ariadne/agent";
+import {
+  type BaseMessage,
+  human,
+  type MessagesState,
+  type StepUpdate,
+  type ToolCall,
+} from "@ariadne/core";
 import { chooseFact, type InjectionOutcome, judge, type MemoryStore } from "@ariadne/memory";
 import { buildAgentGraph, type TurnHooks } from "../domain/graph";
 import { statusOf } from "../domain/providers";
@@ -40,8 +46,19 @@ export function agentInfo(
   };
 }
 
-export function createAgentService(memory?: MemoryStore): AgentService {
-  const byId = new Map(agents.map((a) => [a.id, a]));
+export interface AgentServiceOptions {
+  definitions?: AgentDef[];
+  buildGraph?: typeof buildAgentGraph;
+}
+
+export function createAgentService(
+  store: MemoryStore,
+  memory?: MemoryStore,
+  options: AgentServiceOptions = {},
+): AgentService {
+  const definitions = options.definitions ?? agents;
+  const build = options.buildGraph ?? buildAgentGraph;
+  const byId = new Map(definitions.map((a) => [a.id, a]));
 
   function find(id: string): AgentDef {
     const def = byId.get(id);
@@ -50,17 +67,22 @@ export function createAgentService(memory?: MemoryStore): AgentService {
   }
 
   return {
-    list: () => agents.map((a) => agentInfo(a)),
-    graph: (id) => buildAgentGraph(find(id), true).getGraph(),
-    turn: (id, input) => runTurn(find(id), input, memory),
+    list: () => definitions.map((a) => agentInfo(a)),
+    graph: (id) => build(find(id), true).getGraph(),
+    turn: (id, threadId, input) => runTurn(find(id), threadId, input, store, build, memory),
   };
 }
 
 async function runTurn(
   def: AgentDef,
-  { messages: history, decision, checkpoint }: TurnInput,
+  threadId: string,
+  { message, decision }: TurnInput,
+  store: MemoryStore,
+  build: typeof buildAgentGraph,
   memory?: MemoryStore,
 ): Promise<AgentReply> {
+  const checkpoint = store.getLatest(threadId)?.channels;
+  const history = message === undefined ? [] : [human(message)];
   memory?.consolidate(def.id);
   const fact = chooseFact(memory?.scoredFacts(def.id) ?? []);
 
@@ -74,8 +96,6 @@ async function runTurn(
       ? undefined
       : { onDecision: (kind, targets) => memory.recordValueEvent(episode, def.id, kind, targets) };
 
-  const graph = buildAgentGraph(def, false, decision, hooks, fact === undefined ? [] : [fact]);
-
   // 복원했으면 입력엔 **새것만** 싣는다 — 복원은 대입(리듀서 우회), 입력은 리듀서 통과라
   // 둘이 겹치면 접힌다(누적 채널은 두 배, 이력은 두 벌).
   const restored = Array.isArray(checkpoint?.messages)
@@ -85,7 +105,6 @@ async function runTurn(
   // 첫 턴은 초기 예산에서 이번 턴 비용을 뺀 값을 놓고, 이어지는 턴은 비용만 얹는다.
   const cost = def.budget === undefined ? {} : { budget: restored === 0 ? def.budget - 1 : -1 };
   const input = { messages: history, ...cost } as MessagesState;
-  const opts = checkpoint === undefined ? undefined : { checkpoint };
 
   const steps: StepUpdate<MessagesState>[] = [];
   let produced: BaseMessage[] = [];
@@ -93,11 +112,26 @@ async function runTurn(
   // run이 깨지면 undefined로 남는다 — 그게 "판정 못 했다"의 표현이고, DB에도 응답에도 같은 뜻이다.
   let outcome: InjectionOutcome | undefined;
   try {
-    for await (const step of graph.stream(input, opts)) {
-      steps.push(step);
-    }
-    const last = steps.at(-1);
-    const final = last?.state.messages ?? history;
+    const graph = build(def, false, decision, hooks, fact === undefined ? [] : [fact]);
+    const observed: Pick<typeof graph, "stream"> = {
+      async *stream(input, opts) {
+        const stream = graph.stream(input, opts);
+        try {
+          let result = await stream.next();
+          while (!result.done) {
+            // UI의 스텝 관찰은 유지하고 저장·복원은 공용 래퍼에 맡긴다.
+            steps.push(JSON.parse(JSON.stringify(result.value)) as StepUpdate<MessagesState>);
+            yield result.value;
+            result = await stream.next();
+          }
+          return result.value;
+        } finally {
+          await stream.return({ messages: [] });
+        }
+      },
+    };
+    const state = await runWithCheckpoint(observed, threadId, input, store);
+    const final = state.messages;
     produced = final.slice(before);
     pending = pendingToolCalls(final);
     if (fact !== undefined) outcome = judge(fact.target, produced, pending);
@@ -106,7 +140,6 @@ async function runTurn(
       steps,
       pending,
       ...(fact === undefined ? {} : { injected: { fact, outcome: outcome ?? null } }),
-      ...(last === undefined ? {} : { checkpoint: last.checkpoint }),
     };
   } finally {
     if (memory !== undefined && episode !== undefined) {

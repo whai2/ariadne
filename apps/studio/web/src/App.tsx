@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type AgentInfo, api } from "./api";
+import { type AgentInfo, api, readSelection, saveSelection } from "./api";
 import { useTheme } from "./theme";
 import { AgentView } from "./views/AgentView";
 
@@ -40,13 +40,25 @@ function NavItem({
 export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
+  const [error, setError] = useState("");
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
-    api.agents().then((list) => {
-      setAgents(list);
-      if (list[0]) setSelectedId(list[0].id);
-    });
+    let active = true;
+    api
+      .agents()
+      .then((list) => {
+        if (!active) return;
+        setAgents(list);
+        const saved = readSelection("agent");
+        setSelectedId(list.find((a) => a.id === saved)?.id ?? list[0]?.id);
+      })
+      .catch((e: unknown) => {
+        if (active) setError(String(e));
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const selected = agents.find((a) => a.id === selectedId);
@@ -69,14 +81,17 @@ export function App() {
             <NavItem
               key={a.id}
               active={a.id === selectedId}
-              onClick={() => setSelectedId(a.id)}
+              onClick={() => {
+                setSelectedId(a.id);
+                saveSelection("agent", a.id);
+              }}
               title={a.name}
               subtitle={a.tools.length ? a.tools.join("·") : "툴 없음"}
               dot={a.ready ? "ready" : "no"}
             />
           ))
         ) : (
-          <p className="px-2 text-faint text-xs">불러오는 중…</p>
+          <p className="px-2 text-faint text-xs">{error || "불러오는 중…"}</p>
         )}
 
         <button

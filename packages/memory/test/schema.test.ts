@@ -30,7 +30,7 @@ describe("migrate — 스키마 적용", () => {
     db.close();
   });
 
-  test("장기 기억 네 테이블과 실행 상태 체크포인트", () => {
+  test("장기 기억과 실행 상태 및 thread 메타데이터", () => {
     // 단계마다 하나씩 늘었다: F4.1(episodes·value_events) → F4.2(facts) → F4.3(injections).
     // 전부 **처음 필요해졌을 때** 붙었고, `CREATE TABLE IF NOT EXISTS`뿐이라 기존 DB 파일에도
     // 그냥 붙는다 — 그래서 마이그레이션(버전·ALTER)이 아직 이 저장소에 없다.
@@ -47,6 +47,7 @@ describe("migrate — 스키마 적용", () => {
       "episodes",
       "facts",
       "injections",
+      "threads",
       "value_events",
     ]);
     db.close();
@@ -148,6 +149,23 @@ test("기존 네 테이블 DB에 체크포인트만 추가하고 기존 데이�
     expect(db.query("SELECT * FROM checkpoints").all()).toEqual([]);
     const indexes = db.query<{ origin: string }, []>("PRAGMA index_list(checkpoints)").all();
     expect(indexes.map((index) => index.origin)).toEqual(["pk"]);
+  } finally {
+    db.close();
+  }
+});
+
+test("F5.3 DB에 thread 테이블을 추가해도 기존 체크포인트는 남는다", () => {
+  const db = fresh();
+  try {
+    db.run("DROP TABLE threads");
+    db.run(
+      "INSERT INTO checkpoints (thread_id, checkpoint_id, step, channels_json, created_at) VALUES ('a', 1, 0, '{}', 1)",
+    );
+    migrate(db);
+    expect(db.query("SELECT checkpoint_id FROM checkpoints").all()).toEqual([{ checkpoint_id: 1 }]);
+    db.run("INSERT INTO threads (id, agent, created_at) VALUES ('a', 'agent', 1)");
+    migrate(db);
+    expect(db.query("SELECT agent FROM threads").all()).toEqual([{ agent: "agent" }]);
   } finally {
     db.close();
   }

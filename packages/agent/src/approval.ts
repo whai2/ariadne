@@ -9,13 +9,12 @@
 //   멈춤 = **답 없는 `tool_use`를 이력에 남기고 run을 끝낸다.**
 //   재개 = 같은 이력으로 **새 run**을 시작하되, START가 model이 아니라 tools로 들어간다.
 //
-// 성립하는 이유는 F3.1의 발견이다 — **이 에이전트의 유일한 상태가 messages 채널**이라,
-// 대화만 되돌려주면 체크포인터 없이도 정확히 그 자리에서 이어진다. 스튜디오가 매 턴 이력
-// 전체를 다시 싣는 무상태 규약이 그대로 재개 규약이 된다(새 엔드포인트도, 세션도 필요 없다).
-//
-// langgraph 대응: prebuilt의 human-in-the-loop(`interrupt()` + checkpointer). 우리는 그 둘 다
-// 없이 같은 관찰을 만든다 — 대신 **재개 사이에 프로세스가 죽어도 되는 건 이력을 쥔 쪽이
-// 클라이언트라서**이지, 우리가 영속성을 가져서가 아니다(그건 F4).
+// 기본 에이전트는 messages로 대기 여부를 판별한다. 추가 채널까지 보존하려면
+// F5.3의 runWithCheckpoint가 전체 상태를 저장·복원해야 한다.
+// F5.4 Studio는 서버가 thread와 체크포인트를 소유하므로 클라이언트는
+// thread ID와 승인 결정만 전달한다. core의 인터럽트 없이 정지점에서 새 run을 시작한다.
+// 참고: langgraph의 prebuilt human-in-the-loop와 checkpoint/sqlite. 우리는 상태 복원 후
+// START의 라우터로 재진입하며, 실행 중간 위치나 pending writes는 복원하지 않는다.
 
 import {
   type BaseMessage,

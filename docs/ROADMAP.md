@@ -422,12 +422,12 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 - **검증:** F5.1 ①의 크래시 테스트를 **이력 없이** 다시 돈다 — 저장 직후 SIGKILL하고 새 프로세스에 DB 경로·`threadId`·승인 결정만 넘긴다. allow/deny, plan·budget 보존, 완료한 툴의 재실행 방지, 배치 롤백과 thread 격리를 검증한다. 분석: `docs/notes/34-f5_3-checkpointer.md`.
 - **벽 → 다음:** 스레드는 생겼는데 **HTTP에 그 개념이 없다.** Studio HTTP에는 아직 영속 thread의 생성·조회·재개 계약이 없다.
 
-#### F5.4 · 세션 — 서버가 대화를 소유한다
-- **무엇:** `apps/studio/src/sessions.ts` + `POST /api/threads` · `POST /api/threads/:id/messages`(**body는 새 메시지 하나뿐**) · `GET /api/threads/:id`. 기존 `POST /api/agents/chat`은 **지운다**(호환 유지는 학습 코드에 부채다). `agentTurn`이 `history` 대신 `threadId`를 받는다.
+#### F5.4 · 세션 — 서버가 대화를 소유한다 ✅
+- **무엇:** `apps/studio/src/sessions.ts` + `POST /api/threads` · `POST /api/threads/:id/messages`(**body는 새 메시지 하나뿐**) · `GET /api/threads/:id`. 기존 `POST /api/agents/chat`은 **지운다**(호환 유지는 학습 코드에 부채다). `runTurn`이 `threadId`와 새 입력만 받는다. `threads(id, agent, created_at)`로 소유 에이전트를 영속화하고 F5.3 실행 래퍼를 사용한다.
 - **`approval.ts` 상단 주석도 같이 갱신한다** — 무상태 규약이 F3.3 승인의 기반이었으므로 그 논지가 낡는다. 이 저장소는 **주석이 곧 노트**다.
-- **왜 지금:** 무상태 규약이 숨겨온 비용이 드러난다 — 매 턴 이력 전체가 네트워크를 왕복하고, 재개는 클라이언트가 이력을 정확히 되돌려줄 거라고 **믿고** 있다.
+- **왜 지금:** F5.2까지 브라우저가 체크포인트를 보관하고 다시 전달했다. 이제 브라우저는 thread ID만 보관하며, 서버가 DB에서 상태를 읽고 승인 대기를 검증한다.
 - **안 하는 것:** 인증/멀티유저 · 스트리밍 응답(SSE는 트레이스와 같이 S14에서) · 이력 압축/요약 · 낙관적 동시성.
-- **검증:** 승인 대기 상태에서 **새로고침해도** 승인 버튼이 뜬다(오늘은 사라진다). S12의 벽("승인이 한 run 안에서만 산다")이 여기서 갚인다.
+- **검증:** 승인 대기에서 새로고침해도 대화·예산·승인 버튼이 복구된다. HTTP 서버 강제 종료 후 같은 DB로 재개, allow/deny, 잘못된 입력 거절, thread 격리와 실패 시 상태 보존을 검증했다. 분석: `docs/notes/35-f5_4-server-threads.md`.
 - **벽 → 다음:** 한 스레드가 여러 run을 갖고 각 run이 여러 superstep을 갖는데, **그 계층을 볼 눈이 없다.** `StepUpdate` 배열은 평평하고 시간도 없다.
 
 ### F6 · 관측 — 트레이스는 우리가 만들고, 이름표만 빌린다

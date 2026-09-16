@@ -18,5 +18,5 @@ export type {
 } from "./schema";
 export { migrate, SCHEMA_SQL } from "./schema";
 export { chooseFact, judge } from "./select";
-export type { MemoryStoreOptions } from "./store";
+export type { MemoryStoreOptions, ThreadRow } from "./store";
 export { MemoryStore } from "./store";

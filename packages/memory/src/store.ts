@@ -32,6 +32,12 @@ import {
   type ValueEventRow,
 } from "./schema";
 
+export interface ThreadRow {
+  id: string;
+  agent: string;
+  created_at: number;
+}
+
 export interface MemoryStoreOptions {
   /**
    * 시계 주입. **이 링의 유일한 비결정성이 시각**이라, 테스트가 시간에 안 흔들리게 여기서 막는다.
@@ -213,6 +219,22 @@ export class MemoryStore {
 
   close(): void {
     this.db.close();
+  }
+
+  createThread(id: string, agent: string): ThreadRow {
+    const row = { id, agent, created_at: this.now() };
+    this.db.run("INSERT INTO threads (id, agent, created_at) VALUES (?, ?, ?)", [
+      id,
+      agent,
+      row.created_at,
+    ]);
+    return row;
+  }
+
+  getThread(id: string): ThreadRow | undefined {
+    return (
+      this.db.query<ThreadRow, [string]>("SELECT * FROM threads WHERE id = ?").get(id) ?? undefined
+    );
   }
 
   /** 정상 종료한 run의 정지점 하나를 저장한다. */

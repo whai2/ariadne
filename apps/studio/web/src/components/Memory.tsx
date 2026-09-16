@@ -109,7 +109,7 @@ function Episodes({ episodes }: { episodes: EpisodeRow[] }) {
         <tr className="text-left text-faint">
           <th className="px-1.5 py-0.5 font-semibold">#</th>
           <th className="px-1.5 py-0.5 font-semibold">시각</th>
-          <th className="px-1.5 py-0.5 font-semibold">받은 이력</th>
+          <th className="px-1.5 py-0.5 font-semibold">이번 입력</th>
           <th className="px-1.5 py-0.5 font-semibold">새로 낸 메시지</th>
           <th className="px-1.5 py-0.5 font-semibold">최후</th>
         </tr>
@@ -181,7 +181,7 @@ export function Memory({ view, injectedId }: { view: MemoryView | null; injected
       </Block>
       <Block
         title="에피소드 (episodes) — 겪은 일"
-        hint="한 run이 하나. 멈춤(paused)과 재개는 안 잇는다 — 재개는 새 run이다."
+        hint="한 run이 한 행입니다. 같은 대화의 승인 대기와 재개도 각각 기록합니다."
       >
         <Episodes episodes={view.episodes} />
       </Block>

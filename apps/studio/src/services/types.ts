@@ -18,7 +18,7 @@ import type { InjectionOutcome, MemoryStore, ScoredFact } from "@ariadne/memory"
 export interface AgentService {
   list(): AgentInfo[];
   graph(id: string): GraphView;
-  turn(id: string, input: TurnInput): Promise<AgentReply>;
+  turn(id: string, threadId: string, input: TurnInput): Promise<AgentReply>;
 }
 
 export interface AgentInfo {
@@ -39,25 +39,30 @@ export interface AgentInfo {
 }
 
 /** 한 턴의 입력. 위치 인자 대신 이름으로 — 필드가 늘어도 호출부가 `undefined`로 자리를 안 채운다. */
-export interface TurnInput {
+export type TurnInput =
+  | { message: string; decision?: never }
+  | { decision: "allow" | "deny"; message?: never };
+
+export interface ThreadView {
+  id: string;
+  agentId: string;
+  createdAt: number;
   messages: BaseMessage[];
-  decision?: "allow" | "deny";
-  checkpoint?: ChannelCheckpoint;
+  pending: ToolCall[];
+  state: ChannelCheckpoint;
+}
+
+export interface ThreadService {
+  create(agentId: string): ThreadView;
+  get(id: string): ThreadView;
+  send(id: string, input: TurnInput): Promise<AgentReply & { thread: ThreadView }>;
 }
 
 export interface AgentReply {
   messages: BaseMessage[];
   steps: StepUpdate<MessagesState>[];
   pending: ToolCall[];
-  /** 사실이 없으면 **키 자체가 없다**(F2.1의 규칙 — 비면 안 싣는다). */
   injected?: Injected;
-  /**
-   * 이 턴이 끝난 자리의 실행 상태 (F5.2).
-   *
-   * **무상태 규약은 안 깨진다** — 클라이언트가 쥐는 것이 *이력*에서 *체크포인트*로 바뀔 뿐이다.
-   * (S12의 `pending`·S13의 `injected`와 같은 모양: 안쪽에선 상태, 경계 밖에선 필드.)
-   */
-  checkpoint?: ChannelCheckpoint;
 }
 
 /**

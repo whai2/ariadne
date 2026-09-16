@@ -5,7 +5,11 @@ import { BadRequestError, NotFoundError } from "../errors";
  * 컨트롤러·서비스는 `try`를 안 쓴다. 던지면 여기서 400/404/500으로 갈린다.
  */
 
-export type Handler = (req: Request, url: URL) => Response | Promise<Response>;
+export type Handler = (
+  req: Request,
+  url: URL,
+  params: Record<string, string>,
+) => Response | Promise<Response>;
 
 export interface Route {
   method: "GET" | "POST";
@@ -19,9 +23,26 @@ export function createRouter(
 ): (req: Request) => Promise<Response> {
   return async (req) => {
     const url = new URL(req.url);
-    const route = routes.find((r) => r.method === req.method && r.path === url.pathname);
     try {
-      return await (route?.handler ?? fallback)(req, url);
+      const parts = url.pathname.split("/");
+      for (const route of routes) {
+        const pattern = route.path.split("/");
+        if (route.method !== req.method || pattern.length !== parts.length) continue;
+        const params: Record<string, string> = {};
+        const matches = pattern.every((segment, i) => {
+          const value = parts[i] ?? "";
+          if (!segment.startsWith(":")) return segment === value;
+          if (!value) return false;
+          try {
+            params[segment.slice(1)] = decodeURIComponent(value);
+          } catch {
+            throw new BadRequestError("잘못된 경로 인코딩");
+          }
+          return true;
+        });
+        if (matches) return await route.handler(req, url, params);
+      }
+      return await fallback(req, url, {});
     } catch (e) {
       return errorResponse(e);
     }

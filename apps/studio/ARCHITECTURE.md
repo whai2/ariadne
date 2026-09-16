@@ -35,8 +35,7 @@ HTTP 경계에서 타입은 어차피 지워지고, 공유하면 브라우저 �
                    @ariadne/agent ─┘
 ```
 
-`agent`는 `core·model·tools`를 알지만 **`memory`와 `mcp`는 모른다.** 둘은 agent와 형제고,
-**만나는 자리는 Studio뿐이다.** (→ ROADMAP "링의 의존 규칙")
+`agent`는 `core·model·tools`를 사용한다. F5.3 실행 래퍼는 `memory`의 저장 계약을 타입으로만 참조하며, SQLite 저장소 인스턴스는 Studio가 주입한다. `mcp` 연결도 Studio에서 조립한다.
 
 `@ariadne/tools`는 이제 **타입으로만** 쓴다(`AnyTool`) — 로컬 데모 툴을 들던 에이전트가 사라져서다.
 툴은 전부 MCP 서버에서 온다.
@@ -53,13 +52,15 @@ server.ts                  프로세스: MCP 연결 · MemoryStore 열기 · Bun
       │
       ▼
     controllers/           요청 파싱·검증 → 서비스 호출 → Response.json
-      agents.ts              list · graph · chat (+ 순수 함수 parseChatBody)
+      agents.ts              list · graph
+      threads.ts             create · get · send (+ 순수 함수 parseTurn)
       memory.ts              view
       │
       ▼
     services/              유스케이스. **HTTP를 모른다**
-      types.ts               계약: AgentService · MemoryService + 입출력 타입  ← 컨트롤러가 아는 전부
-      agents.ts              구현: list · graph · turn  ← memory를 아는 마지막 자리
+      types.ts               계약: AgentService · ThreadService · MemoryService + 입출력 타입  ← 컨트롤러가 아는 전부
+      agents.ts              구현: list · graph · turn
+    sessions.ts            thread 소유 에이전트 조회 · 승인 상태 검사 → service.turn
       memory.ts              구현: view (스토어 없으면 빈 뷰)
       │
       ▼
@@ -107,14 +108,21 @@ main.tsx
 **`api.ts`가 잎이다.** 모두가 여기서 타입을 가져오고, 여기만 `fetch`를 부른다 — 컴포넌트도 뷰도
 `fetch`를 직접 안 쓴다.
 
-## 라우팅 — 한 도메인의 3종 세트 + 관찰 창
+## 라우팅
 
 라우트는 [`studio.ts`](src/studio.ts)의 **표 하나**다. 경로를 추가하는 일 = 표에 한 줄 + 컨트롤러에
 핸들러 하나 + (필요하면) 서비스 메서드 하나.
 
-| 목록        | 그래프 구조       | 실행                 | 관찰            |
-|-------------|-------------------|----------------------|-----------------|
-| `/api/agents` | `/api/agents/graph` | `POST /api/agents/chat` | `/api/memory` |
+| API | 역할 |
+|---|---|
+| `GET /api/agents` | 에이전트 목록 |
+| `GET /api/agents/graph?id=...` | 그래프 구조 |
+| `POST /api/threads` | `{ agentId }`로 대화 생성 |
+| `GET /api/threads/:id` | 전체 이력·승인 대기·상태 조회 |
+| `POST /api/threads/:id/messages` | `{ message }` 또는 `{ decision: "allow" / "deny" }` |
+| `GET /api/memory?agent=...` | 에이전트의 장기 기억 조회 |
+
+기존 `POST /api/agents/chat`은 제거했다. 브라우저에는 선택한 에이전트와 thread ID만 남기고, 이력과 체크포인트는 서버가 관리한다.
 
 구조 엔드포인트가 따로 있는 건 **"보내기 전에 그래프를 볼 수 있다"가 스튜디오의 정체성**이라서다.
 
@@ -143,8 +151,7 @@ main.tsx
 `injections`엔 `agent` 컬럼이 없지만 `fact_id`로 사실에 매달려 있어 새지 않는다.
 
 **대가 둘:** 학습이 에이전트 간에 안 넘어가고(`mcp`의 `write_note` 학습이 `filesystem`에 안 간다),
-**사용자 축이 없다**(여러 사람이 쓰면 A의 거부가 B의 프롬프트에 실린다). 후자는 세션이 들어오면
-(F4.4) 먼저 깨지는 자리다.
+**사용자 축이 없다**(여러 사람이 쓰면 A의 거부가 B의 프롬프트에 실린다). F5.4의 thread는 대화 상태를 분리하며, 장기 기억은 계속 에이전트 단위로 공유한다.
 
 이 넷이 화면에 올라오는 길도 둘이다(S13). **누적**은 `GET /api/memory`를 `Memory.tsx`가 세 블록으로
 그리고, **이번 턴에 시험한 사실 하나**는 `AgentReply.injected`로 응답에 실려 대화 바로 위에 뜬다.
@@ -161,30 +168,30 @@ main.tsx
 | # | 사람의 행동 | `decision` | 안에서 도는 것 | 에피소드 |
 |---|---|---|---|---|
 | 1 | "메모 저장해줘" | 없음 | `model` → 툴 호출 → 게이트가 `"ask"` | `paused` |
-| 2 | [거부] 클릭 | `"deny"` | START → `tools` → 거부 → END | `completed` |
+| 2 | [거부] 클릭 | `"deny"` | START → `tools` → 거부 결과 → `model` → END | `completed` |
 | 3 | 같은 요청 → [거부] | `"deny"` | 〃 (**거부 2회 = 임계 도달**) | `completed` |
 | 4 | 같은 요청 | 없음 | 진입의 `consolidate`가 사실을 굳히고 하나를 주입 → **모델이 먼저 묻는다** | `completed` |
 
-**보내기와 재개가 같은 엔드포인트·같은 함수다.** 다른 건 `decision` 한 글자뿐이고, 그게 가능한 건
-에이전트의 상태가 전부 `messages`이고 그걸 **클라이언트가 쥐고 있어서**다(F3.3).
+보내기와 승인 재개는 같은 thread의 메시지 엔드포인트를 사용한다. 새 메시지와 승인 결정은 동시에 받지 않는다. `sessions.ts`가 DB의 대기 상태를 검사하고, `runTurn`이 영속 실행 래퍼를 호출한다.
 
-호출 사슬:
-
-```
-Bun.serve                        src/server.ts
-└ router (POST /api/agents/chat) src/http/router.ts        ← 던져지면 여기서 상태 코드
-  └ agents.chat                  src/controllers/agents.ts ← parseChatBody (400)
-    └ service.turn → runTurn     src/services/agents.ts    ← memory를 아는 마지막 자리 (404)
+```text
+Bun.serve → router → threads controller
+  → sessions (thread 조회 · 승인 요청 검사)
+    → service.turn → runTurn
       ├ consolidate · chooseFact · beginEpisode · beginInjection
-      │     읽기는 값(ScoredFact[])으로, 쓰기는 콜백(TurnHooks)으로 변신
-      ├ buildAgentGraph → createAgent   src/domain/graph.ts → @ariadne/agent
-      │   └ graph.stream               @ariadne/core (Pregel)
-      │     └ gatedToolNode → policy → hooks.onDecision → recordValueEvent   ← 역류
-      └ finally: endEpisode · endInjection(judge(...))
+      ├ buildAgentGraph → createAgent
+      ├ runWithCheckpoint
+      │   ├ getLatest(threadId)
+      │   ├ graph.stream (복원 후 새 입력 적용, UI 스텝 수집)
+      │   └ putCheckpoints (정상 종료 후 원자적 저장)
+      └ endEpisode · endInjection
 ```
 
-**`runTurn`이 그 왕복의 유일한 관문이다.** 아래로는 값과 콜백만 내려가고, 기록은 콜백을 타고
-거슬러 올라온다 — domain도 agent 링도 core도 그 일이 벌어지는 걸 모른다.
+`threads(id, agent, created_at)`는 대화의 소유 에이전트를 보존하고, `checkpoints`는 상태를 보존한다. 새로고침하면 `GET /api/threads/:id`가 저장된 이력에서 승인 대기를 다시 계산한다. 새로고침 자체는 모델이나 툴을 실행하지 않는다.
+
+실제 서버는 `.ariadne/memory.db`를 사용한다. `createStudio()`에 저장소를 생략하면 임시 메모리 DB로 thread 기능만 제공하며 장기 기억 기록은 생략한다. 이 경우 `studio.close()`로 내부 DB를 닫는다. 주입한 저장소의 수명은 호출자가 관리한다.
+
+현재 화면은 에이전트별로 마지막 선택한 대화 하나를 복구한다. 새 대화는 기존 데이터를 삭제하지 않지만, 과거 대화 목록 UI는 아직 없다. 같은 thread의 동시 실행, 사용자 인증, 스트리밍, 영속 트레이스는 범위 밖이다. 스텝과 이번 턴의 주입 배너는 해당 응답에서만 표시하며 새로고침 시 복구하지 않는다.
 
 ## 실행
 
