@@ -1,17 +1,6 @@
-// 메모리 링의 저장 구조 — 테이블 둘과 그 행 타입 (F4.1). **순수하다**(DDL 문자열 + 적용 함수).
-//
-// 담는 게 딱 둘이다:
-//   episodes      에이전트가 **겪은 일** — 한 run이 무엇을 받아 무엇을 냈나
-//   value_events  사람이 **내린 결정** — 승인했나 거부했나
-//
-// **둘을 나눈 게 이 스키마의 전부다.** 내용(무슨 일이 있었나)과 가치(좋았나 나빴나)를 같은
-// 자리에서 만들면, "무엇이 중요한가"를 쓰는 시점에 판단하게 된다. 그런데 무엇이 쓸모 있는지는
-// 그때 알 수 없다 — **중요성은 저장의 속성이 아니라 사용의 결과다.** 그래서 가치는 별도 채널로
-// 흐르고, 여기엔 해석이 하나도 안 들어간다(거부됐다는 사실만 적지, 왜 거부했는지는 안 적는다).
-//
-// 참조: langgraph의 `libs/checkpoint/langgraph/store/base` — 원본도 **체크포인터(실행 상태)와
-// 스토어(장기 기억)를 다른 것으로** 갈라놨다. 우리가 여기서 만드는 건 뒤쪽이다. 앞쪽(체크포인터)은
-// 모델이 읽지 않는 엔진용 저장이라 성격이 아예 다르고, 메모리 링의 맨 마지막에 온다.
+// 메모리 링의 저장 구조. DDL과 행 타입을 정의한다.
+// episodes/value_events: 경험과 사람의 결정, facts/injections: 기억과 사용 결과.
+// checkpoints: 모델에 직접 주입하지 않는 실행 상태(F5.3).
 
 import type { Database } from "bun:sqlite";
 
@@ -166,6 +155,17 @@ CREATE TABLE IF NOT EXISTS injections (
 );
 
 CREATE INDEX IF NOT EXISTS injections_fact ON injections(fact_id);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+  thread_id            TEXT    NOT NULL,
+  checkpoint_ns        TEXT    NOT NULL DEFAULT '',
+  checkpoint_id        INTEGER NOT NULL CHECK (checkpoint_id > 0),
+  parent_checkpoint_id INTEGER,
+  step                 INTEGER NOT NULL CHECK (step >= 0),
+  channels_json        TEXT    NOT NULL,
+  created_at           INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+);
 `;
 
 /**

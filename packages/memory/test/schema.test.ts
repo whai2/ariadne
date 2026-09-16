@@ -30,7 +30,7 @@ describe("migrate — 스키마 적용", () => {
     db.close();
   });
 
-  test("테이블 넷 — 겪은 일 · 내린 결정 · 사실 · 그 사실을 시험한 기록", () => {
+  test("장기 기억 네 테이블과 실행 상태 체크포인트", () => {
     // 단계마다 하나씩 늘었다: F4.1(episodes·value_events) → F4.2(facts) → F4.3(injections).
     // 전부 **처음 필요해졌을 때** 붙었고, `CREATE TABLE IF NOT EXISTS`뿐이라 기존 DB 파일에도
     // 그냥 붙는다 — 그래서 마이그레이션(버전·ALTER)이 아직 이 저장소에 없다.
@@ -42,7 +42,13 @@ describe("migrate — 스키마 적용", () => {
         name: string;
       }[]
     ).map((r) => r.name);
-    expect(names.sort()).toEqual(["episodes", "facts", "injections", "value_events"]);
+    expect(names.sort()).toEqual([
+      "checkpoints",
+      "episodes",
+      "facts",
+      "injections",
+      "value_events",
+    ]);
     db.close();
   });
 
@@ -128,4 +134,21 @@ describe("injections — 시험 기록의 제약 (F4.3)", () => {
     expect(() => insert("좋음")).toThrow();
     db.close();
   });
+});
+
+test("기존 네 테이블 DB에 체크포인트만 추가하고 기존 데이터는 보존한다", () => {
+  const db = fresh();
+  try {
+    db.run("DROP TABLE checkpoints");
+    db.run(
+      "INSERT INTO episodes (agent, started_at, input_count, status) VALUES ('a', 1, 0, 'running')",
+    );
+    migrate(db);
+    expect(db.query("SELECT agent FROM episodes").all()).toEqual([{ agent: "a" }]);
+    expect(db.query("SELECT * FROM checkpoints").all()).toEqual([]);
+    const indexes = db.query<{ origin: string }, []>("PRAGMA index_list(checkpoints)").all();
+    expect(indexes.map((index) => index.origin)).toEqual(["pk"]);
+  } finally {
+    db.close();
+  }
 });

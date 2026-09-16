@@ -403,23 +403,24 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 - **검증:** 357 pass / 3 skip / 0 fail (core 81 · memory 46 · tools 28 · mcp 37 · model 105 · **agent 20 → 26** · studio 34). **agent 밖 여섯 패키지 무수정.** ([노트 32](notes/32-f5_1-resume-honesty.md))
 - **벽 → 다음:** 재개가 성립하는 범위는 **"클라이언트가 모든 채널을 들고 있는 그래프"**다. 상태를 어딘가 둬야 하는데, **되돌려 넣기로는 못 고친다 — 입력은 `applyWrites`로 들어가 리듀서를 타기 때문이다.** 복원은 *쓰기*가 아니라 *세팅*이고, 그건 채널 자신만 할 수 있다.
 
-#### F5.2 · 채널이 자기를 내놓는다 — core의 유일한 영속 확장
-- **무엇:** `channels/base.ts`에 `checkpoint(): unknown | typeof MISSING` / `fromCheckpoint(value)`. **새 인스턴스를 반환한다** — 프로토타입 오염 금지(원본 `last_value.py:53`, `binop.py:120`과 같은 모양). 채널 6종 구현. `loop.ts`의 `stream(input, opts?: { checkpoint })`이 채널 생성 시 **리듀서를 우회해** 복원하고, 그다음 입력을 평소대로 주입.
+#### F5.2 · 채널이 자기를 내놓는다 — core의 유일한 영속 확장 ✅
+- **무엇:** `channels/base.ts`에 `checkpoint(): unknown | typeof MISSING` / `fromCheckpoint(value)`. **새 인스턴스를 반환한다** — 프로토타입 오염 금지(원본 `last_value.py:53`, `binop.py:120`과 같은 모양). 채널 5종 구현. `loop.ts`의 `stream(input, opts?: { checkpoint })`이 채널 생성 시 **리듀서를 우회해** 복원하고, 그다음 입력을 평소대로 주입.
 - **2단 분리가 전부다.** 저장 = `checkpoint()`(리듀서 적용이 **끝난** 스냅샷) · 복원 = `fromCheckpoint()`(직접 대입, 리듀서 **우회**) · 입력 = `applyWrites`(리듀서 **통과**). 섞으면 누적형 리듀서가 반드시 깨진다.
-- **`MISSING`이 여기서 두 번째 일을 한다** — `checkpoint()`가 `MISSING`이면 **키를 아예 안 만든다**(원본 `_checkpoint.py:203`). "빈 채널"과 "값이 마침 `undefined`인 채널"의 구분이 직렬화에서 살아남아야 하는데, 그걸 아는 건 채널뿐이다.
-- **실측할 열린 질문:** `channelVersions`/`versionsSeen`이 정말 불필요한가. **복원 직후 `prepareNextTasks`가 정확히 빈 배열인지**로 가정을 확인한다. 아니면 그때 버전을 도입한다 — 그게 langgraph가 논리 시계를 갖는 이유를 벽으로 만나는 순간이다.
+- **`MISSING`이 여기서 두 번째 일을 한다** — `checkpoint()`가 `MISSING`이면 **키를 아예 안 만든다**(원본 `_checkpoint.py:203`). 메모리 안에서는 빈 채널과 `undefined` 값을 구분하지만, JSON 저장은 `undefined` 키를 생략한다. 이 구분까지 보존하는 serde는 범위 밖이다.
+- **복원 경계:** 상태 채널만 복원하고 START에서 다시 진입한다. 대기 중인 툴 호출은 에이전트 진입 라우터가 판별한다. 실행 위치를 이어가는 방식이 아니므로 버전 추적과 pending writes는 도입하지 않았다.
 - **안 하는 것:** **제어 채널을 저장하지 않는다**(정지점에선 전부 비어 있다 — 저장하면 "언젠가 superstep 중간에서도 멈춘다"는 거짓말을 스키마에 새긴다) · pending writes · 저장소(core는 `bun:sqlite`도 파일도 모른다, **deps 0**) · JSON 외 serde · 스키마 버저닝.
 - **두 배는 여기서부터의 위험이다.** F5.1이 실측했듯 지금은 재개 run의 채널이 비어 있어 입력이 seed될 뿐이라 두 배가 안 된다. 그런데 **복원을 넣는 순간** 값이 있는 채널 위에 입력이 접혀 `operator(3, 3) = 6`이 된다 — 그래서 복원이 `update()`면 안 되고, langgraph가 **복원은 대입 / 입력은 리듀서**로 두 경로를 가르는 이유가 이것이다. (F5.1의 테스트 3이 "값이 한 번 생기면 리듀서가 돈다"를 못 박아 뒀다.)
-- **검증:** 채널 6종 왕복(`checkpoint() → JSON → fromCheckpoint()`). **F5.1 ②의 스냅샷이 뒤집힌다** — 턴 2 상태 키에 `plan`·`budget`이 **다시 나타난다**. 기존 357 무수정 그린 + `test/architecture.test.ts`.
+- **검증:** 채널 5종 왕복(`checkpoint() → JSON → fromCheckpoint()`). **F5.1 ②의 스냅샷이 뒤집힌다** — 턴 2 상태 키에 `plan`·`budget`이 **다시 나타난다**. `test/architecture.test.ts`와 기존 회귀 테스트 유지. 분석: `docs/notes/33-f5_2-channel-checkpoints.md`.
 - **벽 → 다음:** 스냅샷을 만들 수 있게 됐는데 **둘 데가 없고**, "어느 대화의 스냅샷인가"를 가리킬 이름이 없다.
 
-#### F5.3 · 체크포인터 — 모델이 읽지 않는 유일한 테이블
-- **무엇:** `packages/memory/src/checkpoint.ts` + `schema.ts`에 `checkpoints(thread_id, checkpoint_ns DEFAULT '', checkpoint_id, parent_checkpoint_id, step, channels_json, created_at)`. PK `(thread_id, checkpoint_ns, checkpoint_id)`, **인덱스 0개**(원본 sqlite와 같은 이유 — PK prefix가 최신 조회를 그대로 서빙한다). `MemoryStore.putCheckpoint/getLatest/list` + `@ariadne/agent`의 `runWithCheckpoint(graph, threadId, input, store)`.
+#### F5.3 · 체크포인터 — 모델이 읽지 않는 유일한 테이블 ✅
+- **무엇:** `packages/memory/src/checkpoint.ts` + `schema.ts`에 `checkpoints(thread_id, checkpoint_ns DEFAULT '', checkpoint_id, parent_checkpoint_id, step, channels_json, created_at)`. PK `(thread_id, checkpoint_ns, checkpoint_id)`, **추가 인덱스 0개**(원본 sqlite와 같은 이유 — PK prefix가 최신 조회를 그대로 서빙한다). `MemoryStore.putCheckpoint/putCheckpoints/getLatest/list` + `@ariadne/agent`의 `runWithCheckpoint(graph, threadId, input, store)`.
 - **`checkpoint_ns`는 지금 항상 `''`인데도 컬럼을 만든다** — F8 서브그래프가 올 때 마이그레이션을 없애려고. 비용이 0에 가까운 유일한 선행 선언이다.
 - **왜 지금:** F5.2가 스냅샷을 만들었고, **F4.1이 남긴 구멍을 메운다** — "재개는 새 에피소드가 된다(둘을 잇는 키가 없고, 이을 이유도 아직 없다)"고 적어둔 그 키가 `thread_id`다.
-- **안 하는 것:** 브랜치/타임트래블 API(스텝마다 쌓으니 **데이터로는 가능하지만 API는 안 만든다** — 쓸 사람이 없다) · 동시 쓰기 잠금 · GC/보존정책 · 다른 백엔드.
-- **검증:** F5.1 ①의 크래시 테스트를 **이력 없이** 다시 돈다 — 자식 프로세스가 넘기는 건 `threadId` 문자열 하나뿐.
-- **벽 → 다음:** 스레드는 생겼는데 **HTTP에 그 개념이 없다.** `POST /api/agents/chat`은 매 턴 이력 전체를 받는다.
+- **저장 경계:** 스텝 스냅샷을 즉시 JSON 복사하되, 정상 종료 후 한 트랜잭션으로 저장한다. 최신 행만 정지점이며 중간 행은 관찰용이다. 실패한 run은 기존 정지점을 바꾸지 않는다.
+- **안 하는 것:** 브랜치/타임트래블 API · 같은 thread의 동시 실행 제어 · GC/보존정책 · 다른 백엔드. 중간 행에는 실행 위치가 없으므로 그대로 재개할 수 없다.
+- **검증:** F5.1 ①의 크래시 테스트를 **이력 없이** 다시 돈다 — 저장 직후 SIGKILL하고 새 프로세스에 DB 경로·`threadId`·승인 결정만 넘긴다. allow/deny, plan·budget 보존, 완료한 툴의 재실행 방지, 배치 롤백과 thread 격리를 검증한다. 분석: `docs/notes/34-f5_3-checkpointer.md`.
+- **벽 → 다음:** 스레드는 생겼는데 **HTTP에 그 개념이 없다.** Studio HTTP에는 아직 영속 thread의 생성·조회·재개 계약이 없다.
 
 #### F5.4 · 세션 — 서버가 대화를 소유한다
 - **무엇:** `apps/studio/src/sessions.ts` + `POST /api/threads` · `POST /api/threads/:id/messages`(**body는 새 메시지 하나뿐**) · `GET /api/threads/:id`. 기존 `POST /api/agents/chat`은 **지운다**(호환 유지는 학습 코드에 부채다). `agentTurn`이 `history` 대신 `threadId`를 받는다.

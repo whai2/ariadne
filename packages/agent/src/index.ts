@@ -10,9 +10,10 @@
 
 export type { AgentConfig } from "./agent";
 export { createAgent } from "./agent";
-// 승인 게이트 (F3.3). `pendingToolCalls`가 호출자용 표면이다 — run이 끝난 이력에 대고 부르면
-// "사람에게 물어볼 게 남았나"를 알려준다. 재개는 같은 이력으로 그냥 다시 도는 것이라
-// 새 실행 API가 없다(core에 인터럽트를 안 넣었다는 뜻이기도 하다).
+// 승인 게이트. pendingToolCalls는 run 종료 후 승인 대기 여부를 알려준다.
+// F5.3의 runWithCheckpoint는 저장된 상태를 복원해 같은 그래프를 다시 실행한다.
 export type { Approval, ApprovalPolicy } from "./approval";
 export { askAlways, askFor, pendingToolCalls } from "./approval";
+export type { CheckpointStore } from "./checkpoint";
+export { runWithCheckpoint } from "./checkpoint";
 export { ApprovalWithoutToolsError, ModelCannotUseToolsError } from "./errors";

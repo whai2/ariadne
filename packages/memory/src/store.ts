@@ -14,6 +14,13 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { BaseMessage } from "@ariadne/core";
+import {
+  type Checkpoint,
+  type CheckpointSnapshot,
+  latestCheckpoint,
+  listCheckpoints,
+  writeCheckpoints,
+} from "./checkpoint";
 import { proposeFacts } from "./consolidate";
 import {
   type EpisodeRow,
@@ -206,5 +213,31 @@ export class MemoryStore {
 
   close(): void {
     this.db.close();
+  }
+
+  /** 정상 종료한 run의 정지점 하나를 저장한다. */
+  putCheckpoint(threadId: string, snapshot: CheckpointSnapshot): Checkpoint {
+    return this.putCheckpoints(threadId, [snapshot]);
+  }
+
+  /**
+   * 정상 종료한 run의 스텝 이력을 원자적으로 저장한다. 마지막 항목은 정지점이어야 한다.
+   * 같은 thread의 run을 동시에 실행하는 것은 지원하지 않는다.
+   */
+  putCheckpoints(threadId: string, snapshots: readonly CheckpointSnapshot[]): Checkpoint {
+    return writeCheckpoints(this.db, threadId, snapshots, this.now);
+  }
+
+  /** 최신 정지점. 아직 저장된 run이 없으면 undefined. */
+  getLatest(threadId: string): Checkpoint | undefined {
+    return latestCheckpoint(this.db, threadId);
+  }
+
+  /** 최신순 관찰용 이력. 중간 행은 실행 위치 재개용이 아니다. */
+  list(threadId: string, limit = DEFAULT_LIMIT): Checkpoint[] {
+    if (!Number.isSafeInteger(limit) || limit < 0) {
+      throw new Error("limit은 0 이상의 안전한 정수여야 한다.");
+    }
+    return listCheckpoints(this.db, threadId, limit);
   }
 }

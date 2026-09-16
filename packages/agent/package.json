@@ -14,10 +14,12 @@
     "test": "bun test",
     "example": "bun run examples/react.ts",
     "example:approval": "bun run examples/approval.ts",
-    "example:checkpoint": "bun run examples/checkpoint.ts"
+    "example:checkpoint": "bun run examples/checkpoint.ts",
+    "example:persistent": "bun run examples/persistent.ts"
   },
   "dependencies": {
     "@ariadne/core": "workspace:*",
+    "@ariadne/memory": "workspace:*",
     "@ariadne/model": "workspace:*",
     "@ariadne/tools": "workspace:*"
   },
