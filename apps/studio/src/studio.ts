@@ -1,11 +1,14 @@
 import { MemoryStore } from "@ariadne/memory";
+import { TraceStore } from "@ariadne/observability";
 import { agentsController } from "./controllers/agents";
 import { memoryController } from "./controllers/memory";
 import { threadsController } from "./controllers/threads";
+import { tracesController } from "./controllers/traces";
 import { createRouter } from "./http/router";
 import { serveStatic } from "./http/static";
 import { type AgentServiceOptions, createAgentService } from "./services/agents";
 import { createMemoryService } from "./services/memory";
+import { createTraceService } from "./services/traces";
 import { createSessions } from "./sessions";
 
 /**
@@ -21,12 +24,18 @@ export interface Studio {
   close(): void;
 }
 
-export function createStudio(memory?: MemoryStore, options: AgentServiceOptions = {}): Studio {
+export function createStudio(
+  memory?: MemoryStore,
+  options: AgentServiceOptions = {},
+  traceStore?: TraceStore,
+): Studio {
   const store = memory ?? MemoryStore.open();
-  const service = createAgentService(store, memory, options);
+  const traces = traceStore ?? TraceStore.open();
+  const service = createAgentService(store, traces, memory, options);
   const agents = agentsController(service);
   const threads = threadsController(createSessions(store, service));
   const mem = memoryController(createMemoryService(memory));
+  const trace = tracesController(createTraceService(store, traces));
 
   const fetch = createRouter(
     [
@@ -35,6 +44,7 @@ export function createStudio(memory?: MemoryStore, options: AgentServiceOptions 
       { method: "POST", path: "/api/threads", handler: threads.create },
       { method: "GET", path: "/api/threads/:id", handler: threads.get },
       { method: "POST", path: "/api/threads/:id/messages", handler: threads.send },
+      { method: "GET", path: "/api/threads/:id/traces", handler: trace.list },
       { method: "GET", path: "/api/memory", handler: mem.view },
     ],
     (req, url) =>
@@ -47,6 +57,7 @@ export function createStudio(memory?: MemoryStore, options: AgentServiceOptions 
     fetch,
     close: () => {
       if (memory === undefined) store.close();
+      if (traceStore === undefined) traces.close();
     },
   };
 }

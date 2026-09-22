@@ -3,6 +3,7 @@ import type { CompiledGraph, MessagesState, StateSchema } from "@ariadne/core";
 import { messagesSchema } from "@ariadne/core";
 import type { ScoredFact } from "@ariadne/memory";
 import { type ChatModel, model } from "@ariadne/model";
+import type { GraphTrace } from "@ariadne/observability";
 import type { AgentDef } from "./registry";
 
 const previewModel: ChatModel = {
@@ -55,6 +56,7 @@ export function buildAgentGraph(
   decision?: Approval,
   hooks?: TurnHooks,
   facts: readonly ScoredFact[] = [],
+  trace?: GraphTrace,
 ): CompiledGraph<MessagesState> {
   const chatModel = preview
     ? previewModel
@@ -67,6 +69,7 @@ export function buildAgentGraph(
       : { ...messagesSchema, budget: { reducer: (a, b) => a + b } };
   return createAgent({
     model: chatModel,
+    ...(trace === undefined ? {} : { trace }),
     tools: def.tools,
     ...(schema === undefined ? {} : { schema: schema as StateSchema<MessagesState> }),
     ...(() => {

@@ -24,20 +24,31 @@ function label(n: string): string {
   return n === "__start__" ? "START" : n === "__end__" ? "END" : n;
 }
 
-function toMermaid(g: GraphView): string {
+function toMermaid(g: GraphView, activeNodes: readonly string[]): string {
   const lines = ["graph TD"];
   for (const e of g.edges) {
     const arrow = e.kind === "conditional" ? " -.-> " : " --> ";
     lines.push(`  ${e.from}["${label(e.from)}"]${arrow}${e.to}["${label(e.to)}"]`);
   }
+  if (activeNodes.length > 0) {
+    lines.push("  classDef active fill:#a5a6ff,stroke:#ffffff,stroke-width:3px,color:#16171a");
+    lines.push(`  class ${activeNodes.join(",")} active`);
+  }
   return lines.join("\n");
 }
 
-export function Graph({ graph }: { graph: GraphView | { error: string } | null }) {
+export function Graph({
+  graph,
+  activeNodes = [],
+}: {
+  graph: GraphView | { error: string } | null;
+  activeNodes?: readonly string[];
+}) {
   const [svg, setSvg] = useState("");
   const { theme } = useTheme();
   const rawId = useId();
   const id = `m${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
+  const activeKey = activeNodes.join(",");
 
   useEffect(() => {
     if (!graph || "error" in graph) {
@@ -52,7 +63,7 @@ export function Graph({ graph }: { graph: GraphView | { error: string } | null }
       themeVariables: { ...MERMAID_VARS[theme], fontFamily: "ui-monospace, monospace" },
     });
     mermaid
-      .render(id, toMermaid(graph))
+      .render(id, toMermaid(graph, activeKey === "" ? [] : activeKey.split(",")))
       .then((r) => {
         if (!cancelled) setSvg(r.svg);
       })
@@ -62,7 +73,7 @@ export function Graph({ graph }: { graph: GraphView | { error: string } | null }
     return () => {
       cancelled = true;
     };
-  }, [graph, id, theme]);
+  }, [graph, id, theme, activeKey]);
 
   if (graph && "error" in graph) {
     return <div className="font-mono text-danger text-xs">{graph.error}</div>;

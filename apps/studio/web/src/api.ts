@@ -12,18 +12,28 @@ export interface GraphView {
   edges: { from: string; to: string; kind: "static" | "conditional" }[];
 }
 
-export interface ChannelSnapshot {
-  key: string;
-  type: string;
-  available: boolean;
-  value: unknown;
+export type SpanKind = "run" | "superstep" | "node" | "model" | "tool";
+export interface Span {
+  traceId: string;
+  spanId: string;
+  parentId?: string;
+  kind: SpanKind;
+  name: string;
+  startedAt: number;
+  endedAt?: number;
+  status: "running" | "ok" | "error";
+  attributes: Record<string, unknown>;
+  input?: unknown;
+  output?: unknown;
+  error?: { name: string; message: string };
 }
-
-export interface StepUpdate {
-  step: number;
-  nodes: string[];
-  channels: ChannelSnapshot[];
-  state: Record<string, unknown>;
+export interface TraceRecord {
+  traceId: string;
+  threadId?: string;
+  startedAt: number;
+  endedAt: number;
+  status: "ok" | "error";
+  spans: Span[];
 }
 
 export interface AgentInfo {
@@ -104,7 +114,6 @@ export type Checkpoint = Record<string, unknown>;
 
 export interface Reply {
   messages: Message[];
-  steps: StepUpdate[];
   pending?: ToolCall[];
   injected?: Injected;
   thread: ThreadView;
@@ -152,6 +161,7 @@ export const api = {
     getJSON<GraphView | { error: string }>(`/api/agents/graph?id=${encodeURIComponent(id)}`),
   createThread: (agentId: string) => postJSON<ThreadView>("/api/threads", { agentId }),
   thread: (id: string) => getJSON<ThreadView>(`/api/threads/${encodeURIComponent(id)}`),
+  traces: (id: string) => getJSON<TraceRecord[]>(`/api/threads/${encodeURIComponent(id)}/traces`),
   send: (id: string, input: { message: string } | { decision: "allow" | "deny" }) =>
     postJSON<Reply>(`/api/threads/${encodeURIComponent(id)}/messages`, input),
   memory: (agent: string) => getJSON<MemoryView>(`/api/memory?agent=${encodeURIComponent(agent)}`),

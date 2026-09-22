@@ -29,6 +29,12 @@ function postTurn(s: ReturnType<typeof createStudio>, id: string, input: unknown
 async function firstTurn(s: ReturnType<typeof createStudio>, text: string) {
   return postTurn(s, await start(s), { message: text });
 }
+async function firstTracedNode(s: ReturnType<typeof createStudio>, id: string) {
+  const traces = (await (
+    await s.fetch(new Request(`http://x/api/threads/${id}/traces`))
+  ).json()) as Array<{ spans: Array<{ kind: string; name: string }> }>;
+  return traces[0]?.spans.find((span) => span.kind === "node")?.name;
+}
 
 /** 구독 자격증명이 있나 — 진짜 모델을 부르는 블록은 이게 없으면 통째로 건너뛴다. */
 const hasCli = Bun.spawnSync(["which", "claude"]).exitCode === 0;
@@ -280,12 +286,11 @@ describe.skipIf(!hasCli)("승인 게이트 → 진짜 모델로 멈춤·재개 (
     // 재개: 같은 thread에 승인 결정만 전달한다.
     const resumed = (await (await postTurn(studio, id, { decision: "allow" })).json()) as {
       messages: Array<Record<string, unknown>>;
-      steps: Array<{ nodes: string[] }>;
       pending: unknown[];
     };
 
     // model을 다시 안 부르고 tools부터 시작한다(답 없는 tool_use를 되보내면 안 되므로).
-    expect(resumed.steps[0]?.nodes).toEqual(["tools"]);
+    expect(await firstTracedNode(studio, id)).toBe("tools");
     expect(resumed.messages.some((m) => m.role === "tool")).toBe(true);
     expect(resumed.pending).toEqual([]);
   }, 120_000);
@@ -662,7 +667,6 @@ describe.skipIf(!hasCli)("체크포인트 → 진짜 모델 (구독 자격증명
 
   interface Reply {
     messages: Array<{ role: string; content: string }>;
-    steps: Array<{ nodes: string[] }>;
     pending: Array<{ name: string }>;
     thread: { state: { budget?: number }; messages: unknown[] };
     error?: string;
@@ -689,7 +693,7 @@ describe.skipIf(!hasCli)("체크포인트 → 진짜 모델 (구독 자격증명
     expect(paused.pending.map((c) => c.name)).toEqual(["write_note"]);
     const resumed = await chat(id, { decision: "allow" });
     expect(resumed.error).toBeUndefined();
-    expect(resumed.steps[0]?.nodes).toEqual(["tools"]);
+    expect(await firstTracedNode(studio, id)).toBe("tools");
     expect(resumed.pending).toEqual([]);
     expect(resumed.messages.length).toBe(2);
     expect(resumed.thread.state.budget).toBe(3);

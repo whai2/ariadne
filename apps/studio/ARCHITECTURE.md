@@ -98,7 +98,7 @@ main.tsx
       └ views/AgentView.tsx        ← turn() = send · decide
             ├ components/Chat.tsx     ChatLog · Composer
             ├ components/Graph.tsx    (+ theme, mermaid)
-            ├ components/Steps.tsx
+            ├ components/TraceView.tsx  run · span 타임라인 · 노드별 writes
             └ components/Memory.tsx   facts · value_events · episodes
                   │
                   ▼
@@ -120,6 +120,7 @@ main.tsx
 | `POST /api/threads` | `{ agentId }`로 대화 생성 |
 | `GET /api/threads/:id` | 전체 이력·승인 대기·상태 조회 |
 | `POST /api/threads/:id/messages` | `{ message }` 또는 `{ decision: "allow" / "deny" }` |
+| `GET /api/threads/:id/traces` | thread의 완료된 성공·실패 run과 span 목록 |
 | `GET /api/memory?agent=...` | 에이전트의 장기 기억 조회 |
 
 기존 `POST /api/agents/chat`은 제거했다. 브라우저에는 선택한 에이전트와 thread ID만 남기고, 이력과 체크포인트는 서버가 관리한다.
@@ -189,7 +190,9 @@ Bun.serve → router → threads controller
 
 `threads(id, agent, created_at)`는 대화의 소유 에이전트를 보존하고, `checkpoints`는 상태를 보존한다. 새로고침하면 `GET /api/threads/:id`가 저장된 이력에서 승인 대기를 다시 계산한다. 새로고침 자체는 모델이나 툴을 실행하지 않는다.
 
-실제 서버는 `.ariadne/memory.db`를 사용한다. `createStudio()`에 저장소를 생략하면 임시 메모리 DB로 thread 기능만 제공하며 장기 기억 기록은 생략한다. 이 경우 `studio.close()`로 내부 DB를 닫는다. 주입한 저장소의 수명은 호출자가 관리한다.
+실제 서버는 `.ariadne/memory.db`와 `.ariadne/traces.db`를 사용한다. 전자는 대화 상태·기억,
+후자는 완료된 성공·실패 run의 관측 기록이다. `createStudio()`에 저장소를 생략하면 둘 다 임시 DB로
+열리고 `studio.close()`가 닫는다. 주입한 저장소의 수명은 호출자가 관리한다.
 
 현재 화면은 에이전트별로 마지막 선택한 대화 하나를 복구한다. 새 대화는 기존 데이터를 삭제하지 않지만, 과거 대화 목록 UI는 아직 없다. 같은 thread의 동시 실행, 사용자 인증, 스트리밍, 영속 트레이스는 범위 밖이다. 스텝과 이번 턴의 주입 배너는 해당 응답에서만 표시하며 새로고침 시 복구하지 않는다.
 

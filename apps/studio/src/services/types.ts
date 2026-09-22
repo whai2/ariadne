@@ -1,12 +1,6 @@
-import type {
-  BaseMessage,
-  ChannelCheckpoint,
-  GraphView,
-  MessagesState,
-  StepUpdate,
-  ToolCall,
-} from "@ariadne/core";
+import type { BaseMessage, ChannelCheckpoint, GraphView, ToolCall } from "@ariadne/core";
 import type { InjectionOutcome, MemoryStore, ScoredFact } from "@ariadne/memory";
+import type { TraceRecord } from "@ariadne/observability";
 
 /**
  * 서비스 계층의 **계약**. 구현(`agents.ts` · `memory.ts`)과 갈라 둔다 —
@@ -60,7 +54,6 @@ export interface ThreadService {
 
 export interface AgentReply {
   messages: BaseMessage[];
-  steps: StepUpdate<MessagesState>[];
   pending: ToolCall[];
   injected?: Injected;
 }
@@ -89,4 +82,10 @@ export interface MemoryView {
   episodes: ReturnType<MemoryStore["episodes"]>;
   events: ReturnType<MemoryStore["valueEvents"]>;
   facts: ReturnType<MemoryStore["scoredFacts"]>;
+}
+
+// ── 트레이스 ─────────────────────────────────────────────
+
+export interface TraceService {
+  list(threadId: string): TraceRecord[];
 }

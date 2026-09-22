@@ -1,12 +1,7 @@
 import { pendingToolCalls, runWithCheckpoint } from "@ariadne/agent";
-import {
-  type BaseMessage,
-  human,
-  type MessagesState,
-  type StepUpdate,
-  type ToolCall,
-} from "@ariadne/core";
+import { type BaseMessage, human, type MessagesState, type ToolCall } from "@ariadne/core";
 import { chooseFact, type InjectionOutcome, judge, type MemoryStore } from "@ariadne/memory";
+import { TraceCollector, type TraceStore, tracedGraph } from "@ariadne/observability";
 import { buildAgentGraph, type TurnHooks } from "../domain/graph";
 import { statusOf } from "../domain/providers";
 import { type AgentDef, agents } from "../domain/registry";
@@ -53,6 +48,7 @@ export interface AgentServiceOptions {
 
 export function createAgentService(
   store: MemoryStore,
+  traces: TraceStore,
   memory?: MemoryStore,
   options: AgentServiceOptions = {},
 ): AgentService {
@@ -69,7 +65,7 @@ export function createAgentService(
   return {
     list: () => definitions.map((a) => agentInfo(a)),
     graph: (id) => build(find(id), true).getGraph(),
-    turn: (id, threadId, input) => runTurn(find(id), threadId, input, store, build, memory),
+    turn: (id, threadId, input) => runTurn(find(id), threadId, input, store, traces, build, memory),
   };
 }
 
@@ -78,6 +74,7 @@ async function runTurn(
   threadId: string,
   { message, decision }: TurnInput,
   store: MemoryStore,
+  traces: TraceStore,
   build: typeof buildAgentGraph,
   memory?: MemoryStore,
 ): Promise<AgentReply> {
@@ -106,38 +103,23 @@ async function runTurn(
   const cost = def.budget === undefined ? {} : { budget: restored === 0 ? def.budget - 1 : -1 };
   const input = { messages: history, ...cost } as MessagesState;
 
-  const steps: StepUpdate<MessagesState>[] = [];
   let produced: BaseMessage[] = [];
   let pending: ToolCall[] = [];
   // run이 깨지면 undefined로 남는다 — 그게 "판정 못 했다"의 표현이고, DB에도 응답에도 같은 뜻이다.
   let outcome: InjectionOutcome | undefined;
+  const collector = new TraceCollector();
   try {
-    const graph = build(def, false, decision, hooks, fact === undefined ? [] : [fact]);
-    const observed: Pick<typeof graph, "stream"> = {
-      async *stream(input, opts) {
-        const stream = graph.stream(input, opts);
-        try {
-          let result = await stream.next();
-          while (!result.done) {
-            // UI의 스텝 관찰은 유지하고 저장·복원은 공용 래퍼에 맡긴다.
-            steps.push(JSON.parse(JSON.stringify(result.value)) as StepUpdate<MessagesState>);
-            yield result.value;
-            result = await stream.next();
-          }
-          return result.value;
-        } finally {
-          await stream.return({ messages: [] });
-        }
-      },
-    };
-    const state = await runWithCheckpoint(observed, threadId, input, store);
+    const graph = tracedGraph(
+      (trace) => build(def, false, decision, hooks, fact === undefined ? [] : [fact], trace),
+      { collector, threadId, name: def.id },
+    );
+    const state = await runWithCheckpoint(graph, threadId, input, store);
     const final = state.messages;
     produced = final.slice(before);
     pending = pendingToolCalls(final);
     if (fact !== undefined) outcome = judge(fact.target, produced, pending);
     return {
       messages: produced,
-      steps,
       pending,
       ...(fact === undefined ? {} : { injected: { fact, outcome: outcome ?? null } }),
     };
@@ -148,5 +130,7 @@ async function runTurn(
     if (memory !== undefined && injection !== undefined) {
       memory.endInjection(injection, outcome);
     }
+    const spans = collector.spans();
+    if (spans.length > 0) traces.put(spans);
   }
 }

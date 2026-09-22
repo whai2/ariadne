@@ -17,6 +17,7 @@
     "@ariadne/mcp": "workspace:*",
     "@ariadne/memory": "workspace:*",
     "@ariadne/model": "workspace:*",
+    "@ariadne/observability": "workspace:*",
     "@ariadne/tools": "workspace:*",
     "mermaid": "^11.6.0",
     "react": "^19.1.0",

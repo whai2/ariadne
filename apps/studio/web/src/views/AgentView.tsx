@@ -9,15 +9,15 @@ import {
   type MemoryView,
   type Message,
   readSelection,
-  type StepUpdate,
   saveSelection,
   type ThreadView,
   type ToolCall,
+  type TraceRecord,
 } from "../api";
 import { ChatLog, Composer } from "../components/Chat";
 import { Graph } from "../components/Graph";
 import { Memory, OUTCOME } from "../components/Memory";
-import { Steps } from "../components/Steps";
+import { TraceView } from "../components/TraceView";
 
 function Chip({
   kind,
@@ -125,7 +125,8 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
   const [convo, setConvo] = useState<Message[]>([]);
   const [pending, setPending] = useState(false);
   const [awaiting, setAwaiting] = useState<ToolCall[]>([]);
-  const [steps, setSteps] = useState<StepUpdate[]>([]);
+  const [traces, setTraces] = useState<TraceRecord[]>([]);
+  const [activeNodes, setActiveNodes] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [memory, setMemory] = useState<MemoryView | null>(null);
   const [injected, setInjected] = useState<Injected>();
@@ -140,6 +141,11 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     setConvo(thread.messages);
     setAwaiting(thread.pending);
     setCheckpoint(thread.state);
+  }, []);
+
+  const loadTraces = useCallback(async (id: string, active: () => boolean) => {
+    const records = await api.traces(id);
+    if (active()) setTraces(records);
   }, []);
 
   useEffect(() => {
@@ -168,6 +174,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
           if (!active()) return;
           if (thread.agentId !== agent.id) throw new Error("대화의 에이전트가 일치하지 않습니다");
           applyThread(thread);
+          return loadTraces(thread.id, active);
         })
         .catch((e: unknown) => {
           if (!active()) return;
@@ -186,7 +193,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     return () => {
       version.current++;
     };
-  }, [agent.id, applyThread]);
+  }, [agent.id, applyThread, loadTraces]);
 
   async function turn(input: { message: string } | { decision: "allow" | "deny" }) {
     if (pending || loading) return;
@@ -194,7 +201,6 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     const active = () => current === version.current;
     setPending(true);
     setError("");
-    setSteps([]);
     setInjected(undefined);
     let id = threadId;
     try {
@@ -208,7 +214,6 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
       const reply = await api.send(id, input);
       if (!active()) return;
       applyThread(reply.thread);
-      setSteps(reply.steps);
       setInjected(reply.injected);
     } catch (e) {
       if (!active()) return;
@@ -225,6 +230,11 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
     } finally {
       if (active()) {
         setPending(false);
+        if (id) {
+          loadTraces(id, active).catch((e: unknown) => {
+            if (active()) setError(String(e));
+          });
+        }
         api
           .memory(agent.id)
           .then((value) => {
@@ -247,7 +257,8 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
       if (current !== version.current) return;
       saveSelection(`thread:${agent.id}`, thread.id);
       applyThread(thread);
-      setSteps([]);
+      setTraces([]);
+      setActiveNodes([]);
       setInjected(undefined);
       setRestoreFailed(false);
     } catch (e) {
@@ -309,7 +320,7 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         <section className="rounded-lg border border-border bg-surface p-4">
           <h2 className="mb-3 font-semibold text-muted text-xs uppercase tracking-wide">Graph</h2>
-          <Graph graph={graph} />
+          <Graph graph={graph} activeNodes={activeNodes} />
           <p className="mt-2 text-faint text-xs">
             <b>createAgent</b>가 세운 그래프 — 툴이 있으면 model ⇄ tools 루프, 없으면 단발 호출.
           </p>
@@ -349,9 +360,9 @@ export function AgentView({ agent }: { agent: AgentInfo }) {
 
       <section className="mt-4 rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-3 font-semibold text-muted text-xs uppercase tracking-wide">
-          이번 턴에 엔진이 한 일
+          실행 트레이스
         </h2>
-        <Steps steps={steps} />
+        <TraceView records={traces} onActiveNodes={setActiveNodes} />
       </section>
 
       <section className="mt-4 rounded-lg border border-border bg-surface p-4">

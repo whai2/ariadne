@@ -145,9 +145,15 @@ test("관측 패키지에는 런타임 외부 의존성과 암묵적 컨텍스�
     const source = await Bun.file(`${root}/${file}`).text();
     expect(source).not.toContain("AsyncLocalStorage");
     for (const match of source.matchAll(/^import (.*?) from ["']([^"']+)["']/gm)) {
-      if (!match[2]?.startsWith(".")) {
+      const specifier = match[2];
+      if (
+        specifier !== undefined &&
+        !specifier.startsWith(".") &&
+        !specifier.startsWith("bun:") &&
+        !specifier.startsWith("node:")
+      ) {
         expect(match[1]?.startsWith("type ")).toBe(true);
-        expect(match[2]).toBe("@ariadne/core");
+        expect(specifier).toBe("@ariadne/core");
       }
     }
   }

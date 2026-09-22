@@ -32,6 +32,12 @@ async function send(s: Studio, id: string, body: unknown) {
   expect(res.status).toBe(200);
   return (await res.json()) as AgentReply & { thread: ThreadView };
 }
+async function firstNode(s: Studio, id: string): Promise<string | undefined> {
+  const traces = (await (await request(s, `/api/threads/${id}/traces`)).json()) as Array<{
+    spans: Array<{ kind: string; name: string }>;
+  }>;
+  return traces[0]?.spans.find((span) => span.kind === "node")?.name;
+}
 
 for (const decision of ["allow", "deny"] as const) {
   test(`새 서버에서 승인 대기를 조회하고 ${decision} 결정만으로 재개한다`, async () => {
@@ -57,7 +63,7 @@ for (const decision of ["allow", "deny"] as const) {
     const restored = await (await request(restarted, `/api/threads/${thread.id}`)).json();
     expect(restored).toEqual(paused.thread);
     const reply = await send(restarted, thread.id, { decision });
-    expect(reply.steps[0]?.nodes).toEqual(["tools"]);
+    expect(await firstNode(restarted, thread.id)).toBe("tools");
     expect(reply.thread.pending).toEqual([]);
     expect(reply.thread.state.budget).toBe(3);
     expect(reply.thread.messages).toHaveLength(4);
@@ -139,6 +145,33 @@ test("실패한 요청은 기존 thread 상태를 바꾸지 않으며 다른 thr
   await send(s, a.id, { decision: "deny" });
   const second = await send(s, b.id, { message: "b" });
   expect(second.thread.state.budget).toBe(4);
+  const failedTraces = (await (await request(s, `/api/threads/${a.id}/traces`)).json()) as Array<{
+    status: string;
+  }>;
+  expect(failedTraces.some((trace) => trace.status === "error")).toBe(true);
+  expect((await request(s, `/api/threads/${b.id}/traces`)).status).toBe(200);
+});
+
+test("성공·승인 대기·재개 run을 thread별 span 트리로 조회한다", async () => {
+  const db = MemoryStore.open();
+  stores.push(db);
+  const fixture = setup();
+  const s = createStudio(db, fixture.options);
+  const thread = await create(s);
+  expect(await (await request(s, `/api/threads/${thread.id}/traces`)).json()).toEqual([]);
+  await send(s, thread.id, { message: "저장" });
+  await send(s, thread.id, { decision: "deny" });
+  const traces = (await (await request(s, `/api/threads/${thread.id}/traces`)).json()) as Array<{
+    status: string;
+    spans: Array<{ kind: string; status: string }>;
+  }>;
+  expect(traces).toHaveLength(2);
+  expect(traces.every((trace) => trace.status === "ok")).toBe(true);
+  expect(traces.every((trace) => trace.spans.some((span) => span.kind === "model"))).toBe(true);
+  expect(traces.flatMap((trace) => trace.spans).every((span) => span.status !== "running")).toBe(
+    true,
+  );
+  expect((await request(s, "/api/threads/nope/traces")).status).toBe(404);
 });
 
 test("HTTP 서버 프로세스 강제 종료 후 같은 DB로 thread와 승인 상태를 복구한다", async () => {
@@ -147,7 +180,12 @@ test("HTTP 서버 프로세스 강제 종료 후 같은 DB로 thread와 승인 �
   const path = join(dir, "memory.sqlite");
   async function boot() {
     const child = Bun.spawn(
-      [process.execPath, join(import.meta.dir, "fixtures/thread-server.ts"), path],
+      [
+        process.execPath,
+        join(import.meta.dir, "fixtures/thread-server.ts"),
+        path,
+        `${path}.traces`,
+      ],
       {
         stdout: "pipe",
         stderr: "pipe",
@@ -200,6 +238,10 @@ test("HTTP 서버 프로세스 강제 종료 후 같은 DB로 thread와 승인 �
     const reply = (await resumed.json()) as { thread: ThreadView };
     expect(reply.thread.pending).toEqual([]);
     expect(reply.thread.state.budget).toBe(3);
+    const traces = (await (
+      await fetch(`${second.url}api/threads/${id}/traces`)
+    ).json()) as unknown[];
+    expect(traces).toHaveLength(2);
   } finally {
     second.child.kill();
     await second.child.exited;

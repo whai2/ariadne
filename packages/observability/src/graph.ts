@@ -89,35 +89,56 @@ export interface TraceRunOptions extends StreamOptions {
   name?: string;
 }
 
+export type TraceGraphOptions = Omit<TraceRunOptions, "checkpoint">;
+
+/**
+ * 관측 가능한 graph 모양을 만든다. 실행을 소비하지 않으므로 체크포인터 같은 바깥 실행 래퍼와
+ * 조합할 수 있다. 호출마다 새 root/GraphTrace를 만들고 성공·실패 모두 닫는다.
+ */
+export function tracedGraph<S extends object>(
+  build: (trace: GraphTrace) => Pick<CompiledGraph<S>, "stream">,
+  options: TraceGraphOptions,
+): Pick<CompiledGraph<S>, "stream"> {
+  return {
+    async *stream(input, streamOptions) {
+      const root = options.collector.startRun(
+        options.name ?? "run",
+        options.threadId === undefined ? {} : { "ariadne.thread.id": options.threadId },
+        input,
+      );
+      const trace = new GraphTrace(root);
+      try {
+        const stream = build(trace).stream(input, streamOptions);
+        let result = await stream.next();
+        while (!result.done) {
+          trace.observe(result.value);
+          yield result.value;
+          result = await stream.next();
+        }
+        options.collector.finishRun(root, result.value);
+        return result.value;
+      } catch (error) {
+        const summary = describeError(error);
+        trace.fail(summary);
+        options.collector.finishRun(root, undefined, summary);
+        throw error;
+      }
+    },
+  };
+}
+
 /** 입력/반환/예외는 그래프 계약 그대로. 실패 trace도 전달받은 collector에서 조회한다. */
 export async function traceRun<S extends object>(
   build: (trace: GraphTrace) => Pick<CompiledGraph<S>, "stream">,
   input: S,
   options: TraceRunOptions,
 ): Promise<S> {
-  const { collector } = options;
-  const root = collector.startRun(
-    options.name ?? "run",
-    options.threadId === undefined ? {} : { "ariadne.thread.id": options.threadId },
+  const graph = tracedGraph(build, options);
+  const stream = graph.stream(
     input,
+    options.checkpoint === undefined ? undefined : { checkpoint: options.checkpoint },
   );
-  const trace = new GraphTrace(root);
-  try {
-    const stream = build(trace).stream(
-      input,
-      options.checkpoint === undefined ? undefined : { checkpoint: options.checkpoint },
-    );
-    let result = await stream.next();
-    while (!result.done) {
-      trace.observe(result.value);
-      result = await stream.next();
-    }
-    collector.finishRun(root, result.value);
-    return result.value;
-  } catch (error) {
-    const summary = describeError(error);
-    trace.fail(summary);
-    collector.finishRun(root, undefined, summary);
-    throw error;
-  }
+  let result = await stream.next();
+  while (!result.done) result = await stream.next();
+  return result.value;
 }

@@ -35,7 +35,7 @@ export function setup() {
   };
   const options: AgentServiceOptions = {
     definitions: [def],
-    buildGraph: (_def, _preview, decision, hooks) =>
+    buildGraph: (_def, _preview, decision, hooks, _facts, trace) =>
       createAgent<MessagesState>({
         schema: {
           ...messagesSchema,
@@ -54,6 +54,7 @@ export function setup() {
         },
         tools: [tool],
         approval: approvalPolicy(["write"], decision, hooks),
+        ...(trace === undefined ? {} : { trace }),
       }),
   };
   return {
