@@ -1,0 +1,20 @@
+{
+  "name": "@ariadne/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ariadne 평가 링 — 데이터셋을 반복 실행해 실행 기록과 성적표의 재료를 만든다",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@ariadne/core": "workspace:*",
+    "@ariadne/observability": "workspace:*"
+  }
+}

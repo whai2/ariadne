@@ -33,6 +33,8 @@ HTTP 경계에서 타입은 어차피 지워지고, 공유하면 브라우저 �
    └────────────── @ariadne/model ◀┤
                                    │
                    @ariadne/agent ─┘
+
+@ariadne/evals ──▶ core(타입) · observability(타입)
 ```
 
 `agent`는 `core·model·tools`를 사용한다. F5.3 실행 래퍼는 `memory`의 저장 계약을 타입으로만 참조하며, SQLite 저장소 인스턴스는 Studio가 주입한다. `mcp` 연결도 Studio에서 조립한다.
@@ -53,6 +55,7 @@ server.ts                  프로세스: MCP 연결 · MemoryStore 열기 · Bun
       ▼
     controllers/           요청 파싱·검증 → 서비스 호출 → Response.json
       agents.ts              list · graph
+      evals.ts               BFCL suite · run
       threads.ts             create · get · send (+ 순수 함수 parseTurn)
       memory.ts              view
       │
@@ -60,6 +63,7 @@ server.ts                  프로세스: MCP 연결 · MemoryStore 열기 · Bun
     services/              유스케이스. **HTTP를 모른다**
       types.ts               계약: AgentService · ThreadService · MemoryService + 입출력 타입  ← 컨트롤러가 아는 전부
       agents.ts              구현: list · graph · turn
+      evals.ts               구현: benchmark target → runner → report
     sessions.ts            thread 소유 에이전트 조회 · 승인 상태 검사 → service.turn
       memory.ts              구현: view (스토어 없으면 빈 뷰)
       │
@@ -95,14 +99,14 @@ errors.ts                  BadRequestError · NotFoundError — 계층 공용 �
 main.tsx
   └ theme.tsx (ThemeProvider)
   └ App.tsx                        ← 에이전트 사이드바 (탭 없음)
-      └ views/AgentView.tsx        ← turn() = send · decide
-            ├ components/Chat.tsx     ChatLog · Composer
-            ├ components/Graph.tsx    (+ theme, mermaid)
-            ├ components/TraceView.tsx  run · span 타임라인 · 노드별 writes
-            └ components/Memory.tsx   facts · value_events · episodes
-                  │
-                  ▼
-              api.ts               ← 유일한 서버 접점이자 타입 원본
+      ├ views/AgentView.tsx        ← turn() = send · decide
+      │     ├ components/Chat.tsx     ChatLog · Composer
+      │     ├ components/Graph.tsx    (+ theme, mermaid)
+      │     ├ components/TraceView.tsx  run · span 타임라인 · 노드별 writes
+      │     └ components/Memory.tsx   facts · value_events · episodes
+      └ views/EvalView.tsx         ← BFCL suite · Claude Code 전체 실행 · raw record
+
+api.ts                             ← 유일한 서버 접점이자 타입 원본
 ```
 
 **`api.ts`가 잎이다.** 모두가 여기서 타입을 가져오고, 여기만 `fetch`를 부른다 — 컴포넌트도 뷰도
@@ -122,6 +126,8 @@ main.tsx
 | `POST /api/threads/:id/messages` | `{ message }` 또는 `{ decision: "allow" / "deny" }` |
 | `GET /api/threads/:id/traces` | thread의 완료된 성공·실패 run과 span 목록 |
 | `GET /api/memory?agent=...` | 에이전트의 장기 기억 조회 |
+| `GET /api/evals/bfcl` | 고정 BFCL V4 mini suite 설명 |
+| `POST /api/evals/bfcl/runs` | 12건을 Claude Code로 실행하고 raw report 반환 |
 
 기존 `POST /api/agents/chat`은 제거했다. 브라우저에는 선택한 에이전트와 thread ID만 남기고, 이력과 체크포인트는 서버가 관리한다.
 

@@ -1,4 +1,11 @@
-import type { BaseMessage, ChannelCheckpoint, GraphView, ToolCall } from "@ariadne/core";
+import type {
+  BaseMessage,
+  ChannelCheckpoint,
+  GraphView,
+  MessagesState,
+  ToolCall,
+} from "@ariadne/core";
+import type { BfclExpected, BfclInput, EvalReport } from "@ariadne/evals";
 import type { InjectionOutcome, MemoryStore, ScoredFact } from "@ariadne/memory";
 import type { TraceRecord } from "@ariadne/observability";
 
@@ -88,4 +95,26 @@ export interface MemoryView {
 
 export interface TraceService {
   list(threadId: string): TraceRecord[];
+}
+
+// ── 평가 ─────────────────────────────────────────────────
+
+export interface EvalSuiteCaseView {
+  id: string;
+  prompt: string;
+  tools: string[];
+  expectedTools: string[];
+  tags: readonly string[];
+}
+
+export interface EvalSuiteView {
+  name: string;
+  version: string;
+  model: string;
+  cases: EvalSuiteCaseView[];
+}
+
+export interface EvalService {
+  suite(): EvalSuiteView;
+  run(): Promise<EvalReport<BfclInput, BfclExpected, MessagesState>>;
 }

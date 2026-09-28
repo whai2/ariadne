@@ -9,7 +9,7 @@ TypeScript **올인원 에이전트 프레임워크**(Mastra 스타일)를 바�
 ## 모노레포 (Bun workspaces)
 ```
 packages/core   @ariadne/core   ← 그래프 엔진 (런타임 deps 0)
-packages/*      model·tools·agent·mcp·memory·observability
+packages/*      model·tools·agent·mcp·memory·observability·evals
 apps/studio     @ariadne/studio ← 비주얼 개발 UI (그래프 시각화 + 스텝 실행)
 ```
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { type AgentInfo, api, readSelection, saveSelection } from "./api";
 import { useTheme } from "./theme";
 import { AgentView } from "./views/AgentView";
+import { EvalView } from "./views/EvalView";
 
 function NavItem({
   active,
@@ -40,6 +41,7 @@ function NavItem({
 export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
+  const [page, setPage] = useState<"agent" | "evals">("agent");
   const [error, setError] = useState("");
   const { theme, toggle } = useTheme();
 
@@ -82,6 +84,7 @@ export function App() {
               key={a.id}
               active={a.id === selectedId}
               onClick={() => {
+                setPage("agent");
                 setSelectedId(a.id);
                 saveSelection("agent", a.id);
               }}
@@ -94,6 +97,16 @@ export function App() {
           <p className="px-2 text-faint text-xs">{error || "불러오는 중…"}</p>
         )}
 
+        <div className="px-2 pt-4 pb-1 font-bold text-[11px] text-faint uppercase tracking-wider">
+          Quality
+        </div>
+        <NavItem
+          active={page === "evals"}
+          onClick={() => setPage("evals")}
+          title="Evals"
+          subtitle="BFCL · Claude Code"
+        />
+
         <button
           type="button"
           onClick={toggle}
@@ -105,7 +118,11 @@ export function App() {
       </nav>
 
       <main className="flex-1 overflow-y-auto">
-        {selected ? <AgentView key={selected.id} agent={selected} /> : null}
+        {page === "evals" ? (
+          <EvalView />
+        ) : selected ? (
+          <AgentView key={selected.id} agent={selected} />
+        ) : null}
       </main>
     </div>
   );

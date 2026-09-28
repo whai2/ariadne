@@ -1,12 +1,14 @@
 import { MemoryStore } from "@ariadne/memory";
 import { TraceStore } from "@ariadne/observability";
 import { agentsController } from "./controllers/agents";
+import { evalsController } from "./controllers/evals";
 import { memoryController } from "./controllers/memory";
 import { threadsController } from "./controllers/threads";
 import { tracesController } from "./controllers/traces";
 import { createRouter } from "./http/router";
 import { serveStatic } from "./http/static";
 import { type AgentServiceOptions, createAgentService } from "./services/agents";
+import { createEvalService, type EvalServiceOptions } from "./services/evals";
 import { createMemoryService } from "./services/memory";
 import { createTraceService } from "./services/traces";
 import { createSessions } from "./sessions";
@@ -24,9 +26,13 @@ export interface Studio {
   close(): void;
 }
 
+export interface StudioOptions extends AgentServiceOptions {
+  evals?: EvalServiceOptions;
+}
+
 export function createStudio(
   memory?: MemoryStore,
-  options: AgentServiceOptions = {},
+  options: StudioOptions = {},
   traceStore?: TraceStore,
 ): Studio {
   const store = memory ?? MemoryStore.open();
@@ -36,6 +42,7 @@ export function createStudio(
   const threads = threadsController(createSessions(store, service));
   const mem = memoryController(createMemoryService(memory));
   const trace = tracesController(createTraceService(store, traces));
+  const evals = evalsController(createEvalService(options.evals));
 
   const fetch = createRouter(
     [
@@ -46,6 +53,8 @@ export function createStudio(
       { method: "POST", path: "/api/threads/:id/messages", handler: threads.send },
       { method: "GET", path: "/api/threads/:id/traces", handler: trace.list },
       { method: "GET", path: "/api/memory", handler: mem.view },
+      { method: "GET", path: "/api/evals/bfcl", handler: evals.suite },
+      { method: "POST", path: "/api/evals/bfcl/runs", handler: evals.run },
     ],
     (req, url) =>
       req.method === "GET" && !url.pathname.startsWith("/api/")

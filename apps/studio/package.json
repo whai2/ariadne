@@ -14,6 +14,7 @@
   "dependencies": {
     "@ariadne/agent": "workspace:*",
     "@ariadne/core": "workspace:*",
+    "@ariadne/evals": "workspace:*",
     "@ariadne/mcp": "workspace:*",
     "@ariadne/memory": "workspace:*",
     "@ariadne/model": "workspace:*",

@@ -17,6 +17,7 @@
       "dependencies": {
         "@ariadne/agent": "workspace:*",
         "@ariadne/core": "workspace:*",
+        "@ariadne/evals": "workspace:*",
         "@ariadne/mcp": "workspace:*",
         "@ariadne/memory": "workspace:*",
         "@ariadne/model": "workspace:*",
@@ -53,6 +54,14 @@
     "packages/core": {
       "name": "@ariadne/core",
       "version": "0.0.0",
+    },
+    "packages/evals": {
+      "name": "@ariadne/evals",
+      "version": "0.0.0",
+      "dependencies": {
+        "@ariadne/core": "workspace:*",
+        "@ariadne/observability": "workspace:*",
+      },
     },
     "packages/mcp": {
       "name": "@ariadne/mcp",
@@ -110,6 +119,8 @@
     "@ariadne/agent": ["@ariadne/agent@workspace:packages/agent"],
 
     "@ariadne/core": ["@ariadne/core@workspace:packages/core"],
+
+    "@ariadne/evals": ["@ariadne/evals@workspace:packages/evals"],
 
     "@ariadne/mcp": ["@ariadne/mcp@workspace:packages/mcp"],
 

@@ -458,11 +458,12 @@ model+tools 자율 루프. **agent = core 위의 특수한 그래프**라는 걸
 > **가르는 기준은 "판정에 모델이 필요한가"**로 다시 잡는다. 결정론적인 것부터 만든다 —
 > 싸고, 재현되고, **판정자 자체를 검증할 기준**이 되기 때문이다.
 
-#### F7.1 · 데이터셋과 러너 — 케이스, k회, 성적표
-- **새 패키지. deps 0.** `evals → core`(타입) + `evals → observability`. **`agent`·`model`을 모른다** — 평가 대상은 `(input) => Promise<RunRecord>` 함수로 주입받는다(F1의 `CreateMessage` 주입점과 같은 수법: 테스트가 캐스팅 없이 가짜를 꽂는다).
-- **무엇:** `dataset.ts`(`EvalCase { id, input, expected?, check?, rubric?, tags? }`) · `runner.ts`(케이스 × k회, 동시성 제한, `RunRecord { steps, messages, spans, error? }`) · `report.ts` · `datasets/`(**결정론적 가짜 툴** 기반 12~20건).
-- **오프라인이 기본이다.** F1의 규약대로 **키 없이 `bun run verify`가 그린**이어야 하므로 러너·메트릭은 가짜 툴 + 스크립트된 모델로 전부 테스트된다. 실모델 실행은 `bun run evals`라는 **별도 스크립트**로 분리.
-- **검증:** 가짜 실행기로 k=3이 케이스×3 레코드를 정확히 모은다. 실행이 던져도 **레코드가 남는다**(`error` 필드) — 실패한 run이 데이터에서 사라지면 성적표가 거짓말을 한다.
+#### F7.1 · 데이터셋과 러너 — 케이스, k회, 성적표 ✅
+- **새 패키지. 외부 런타임 deps 0.** `evals → core`(타입) + `evals → observability`. **`agent`·`model`을 모른다** — 평가 대상은 `EvalTarget(input, context) → RunObservation` 함수로 주입받는다. 러너가 사례·trial·시각·예외를 `RunRecord`로 감싸므로 가짜와 실제 대상이 같은 길을 탄다.
+- **무엇:** `dataset.ts`(`EvalCase`·중복 ID 가드) · `runner.ts`(case × k, 동시성 제한, 입력 순서 보존, 실패 기록) · `report.ts`(**아직 점수 없이** 실행 완결성만) · `datasets/bfcl.ts`(BFCL V4 고정 commit에서 simple 6 + irrelevance 6을 JSON Schema로 정규화한 Apache-2.0 발췌본).
+- **실모델은 별도 길을 만들지 않는다.** Studio의 `EvalView` → `/api/evals/bfcl/runs` → `createAgent` + `claude-code/sonnet` + 기존 span tree. 각 BFCL 함수는 실행 직전 `askAlways`로 멈춰 첫 tool call을 보존한다. 일반 Chat과 같은 프롬프트 툴 심을 실제로 재는 자리다.
+- **오프라인이 기본이다.** `createStudio({ evals: { target } })` 주입점으로 전체 HTTP·UI 계약을 가짜 대상에서 검증하므로 `bun run verify`는 모델을 추가 호출하지 않는다. 사람이 Studio에서 [전체 실행]을 눌렀을 때만 실제 Claude Code 12회가 돈다.
+- **검증:** 가짜 실행기로 k=3과 동시성 상한·안정된 반환 순서, 실행 예외도 빈 관측값+`error` 레코드로 남는 것, BFCL 출처·구성, Studio suite/run API를 못 박았다. 분석: [39-f7_1-eval-runner.md](notes/39-f7_1-eval-runner.md).
 - **벽 → 다음:** 레코드는 쌓이는데 **점수가 없다.**
 
 #### F7.2 · 결정론적 메트릭 — 궤적·툴·효율 (LLM 0)

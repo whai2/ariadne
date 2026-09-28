@@ -36,6 +36,41 @@ export interface TraceRecord {
   spans: Span[];
 }
 
+export interface EvalSuiteCase {
+  id: string;
+  prompt: string;
+  tools: string[];
+  expectedTools: string[];
+  tags: string[];
+}
+
+export interface EvalSuite {
+  name: string;
+  version: string;
+  model: string;
+  cases: EvalSuiteCase[];
+}
+
+export interface EvalRecord {
+  caseId: string;
+  trial: number;
+  startedAt: number;
+  endedAt: number;
+  messages: Message[];
+  spans: Span[];
+  error?: { name: string; message: string };
+}
+
+export interface EvalReport {
+  dataset: string;
+  version: string;
+  caseCount: number;
+  trialCount: number;
+  completed: number;
+  failed: number;
+  records: EvalRecord[];
+}
+
 export interface AgentInfo {
   id: string;
   name: string;
@@ -165,6 +200,8 @@ export const api = {
   send: (id: string, input: { message: string } | { decision: "allow" | "deny" }) =>
     postJSON<Reply>(`/api/threads/${encodeURIComponent(id)}/messages`, input),
   memory: (agent: string) => getJSON<MemoryView>(`/api/memory?agent=${encodeURIComponent(agent)}`),
+  evalSuite: () => getJSON<EvalSuite>("/api/evals/bfcl"),
+  runEvals: () => postJSON<EvalReport>("/api/evals/bfcl/runs", {}),
 };
 
 // 브라우저에는 화면 선택에 필요한 ID만 남긴다. 상태와 이력은 서버에서 읽는다.
