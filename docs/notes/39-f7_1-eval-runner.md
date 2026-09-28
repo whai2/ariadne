@@ -98,7 +98,7 @@ BFCL single-turn AST 과제는 **첫 tool call**이 산출물이다. 툴을 실�
 - Studio GET suite와 POST run이 같은 12건을 반환하고 score 필드가 없음.
 - React production build에서 Evals 화면 타입·번들 검증.
 
-`bun run verify` 결과는 **441 pass · 3 skip · 0 fail**이다. Studio에서 실제
+`bun run verify` 결과는 **442 pass · 3 skip · 0 fail**이다. Studio에서 실제
 `claude-code/sonnet`으로 12건을 실행한 결과도 **completed 12 · errors 0**이었고, 각 record에
 관측 tool call과 4~6개 span이 남았다.
 
@@ -115,7 +115,22 @@ BFCL single-turn AST 과제는 **첫 tool call**이 산출물이다. 툴을 실�
   데이터셋에 이미 있는 `input`·`expected`를 다시 복사하지 않는다.
 - `EvalReport`: 화면이 표시하는 case·trial·완료·실패 수와 records만 남긴다. suite 응답과 겹치는
   dataset·version, 아무도 읽지 않는 전체 시작·종료 시각은 제거한다.
-- BFCL 내부 구성 요소 타입은 별도 사용자가 없으므로 공개 export하지 않고 `BfclInput` 안에
-  직접 표현한다.
+- BFCL 내부 구성 요소 타입은 공개하지 않는다. `BfclTool`처럼 현재 파일에서 반복해서 읽는 데
+  도움이 되는 이름만 파일 안에 둔다.
 
 제거한 필드가 필요해지는 단계가 실제로 오면, 그때 소비 코드와 테스트와 함께 다시 도입한다.
+
+## 8. 데이터와 실행 흐름을 한 문법으로 읽는다
+
+첫 데이터 표현은 simple 사례마다 `messages → tools → expected`를 전부 펼쳤고, irrelevance만
+`map`으로 만들었다. 같은 개념이 두 문법으로 보여 어떤 차이가 데이터이고 어떤 차이가 껍데기인지
+읽기 어려웠다. 이제 모든 사례는 다음 둘 중 하나로 보인다.
+
+```ts
+callCase(id, question, tool(...));
+skipCase(id, question, tool(...));
+```
+
+둘 다 같은 `bfclCase`를 거치며 차이는 기대 호출의 유무뿐이다. 러너도 한 함수에 섞여 있던
+job 생성과 단일 job 실행을 `jobsFor`·`runJob`으로 분리했다. 공개 타입이나 실행 결과는 늘리지
+않았고, 12개 사례의 제공 툴·기대 호출 짝을 테스트 하나로 고정했다.

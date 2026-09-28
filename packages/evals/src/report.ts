@@ -9,7 +9,13 @@ export interface EvalReport {
   records: RunRecord[];
 }
 
-export function buildReport(caseCount: number, records: RunRecord[]): EvalReport {
+export function buildReport({
+  caseCount,
+  records,
+}: {
+  caseCount: number;
+  records: RunRecord[];
+}): EvalReport {
   return {
     caseCount,
     trialCount: records.length,

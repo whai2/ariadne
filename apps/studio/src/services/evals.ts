@@ -13,7 +13,7 @@ import type { AnyTool } from "@ariadne/tools";
 import { z } from "zod";
 import type { EvalService } from "./types";
 
-const MODEL = "claude-code/sonnet";
+const MODEL_ID = "claude-code/sonnet";
 
 export interface EvalServiceOptions {
   target?: EvalTarget<BfclInput>;
@@ -28,7 +28,7 @@ function describeError(error: unknown): { name: string; message: string } {
 }
 
 /** BFCL 선언은 실행되지 않는다. askAlways가 첫 tool call 앞에서 멈춰 선택 결과만 보존한다. */
-function toolsFor(input: BfclInput): AnyTool[] {
+function toolStubsFor(input: BfclInput): AnyTool[] {
   return input.tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
@@ -42,7 +42,7 @@ function toolsFor(input: BfclInput): AnyTool[] {
 
 /** Studio가 이미 사용하는 createAgent + trace 경로를 BFCL 입력 함수로 좁힌다. */
 export function claudeCodeBfclTarget(): EvalTarget<BfclInput> {
-  const chat = model(MODEL, { promptedTools: true });
+  const claude = model(MODEL_ID, { promptedTools: true });
   return async (input, context) => {
     const collector = new TraceCollector();
     let messages: BaseMessage[] = input.messages.map((message) => human(message.content));
@@ -50,8 +50,8 @@ export function claudeCodeBfclTarget(): EvalTarget<BfclInput> {
       const graph = tracedGraph(
         (trace) =>
           createAgent({
-            model: chat,
-            tools: toolsFor(input),
+            model: claude,
+            tools: toolStubsFor(input),
             approval: askAlways,
             maxToolRounds: 1,
             trace,
@@ -77,7 +77,7 @@ export function createEvalService(options: EvalServiceOptions = {}): EvalService
     suite: () => ({
       name: BFCL_V4_MINI.name,
       version: BFCL_V4_MINI.version,
-      model: MODEL,
+      model: MODEL_ID,
       cases: BFCL_V4_MINI.cases.map((item) => ({
         id: item.id,
         prompt: item.input.messages.map((message) => message.content).join("\n"),
@@ -92,7 +92,7 @@ export function createEvalService(options: EvalServiceOptions = {}): EvalService
         trials: options.trials ?? 1,
         concurrency: options.concurrency ?? 2,
       });
-      return buildReport(BFCL_V4_MINI.cases.length, records);
+      return buildReport({ caseCount: BFCL_V4_MINI.cases.length, records });
     },
   };
 }

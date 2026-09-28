@@ -31,7 +31,7 @@ interface Job<I> {
   trial: number;
 }
 
-function positiveInteger(value: number, name: string): void {
+function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error(`${name}은 1 이상의 안전한 정수여야 한다.`);
   }
@@ -47,6 +47,37 @@ function describeError(error: unknown): EvalFailure {
   }
 }
 
+function jobsFor<I>(dataset: EvalDataset<I, unknown>, trials: number): Job<I>[] {
+  const jobs: Job<I>[] = [];
+  for (const item of dataset.cases) {
+    for (let trial = 0; trial < trials; trial++) {
+      jobs.push({ index: jobs.length, caseId: item.id, input: item.input, trial });
+    }
+  }
+  return jobs;
+}
+
+async function runJob<I>(job: Job<I>, target: EvalTarget<I>): Promise<RunRecord> {
+  const startedAt = Date.now();
+  let observation: RunObservation;
+
+  try {
+    observation = await target(job.input, { caseId: job.caseId });
+  } catch (error) {
+    observation = { messages: [], spans: [], error: describeError(error) };
+  }
+
+  return {
+    caseId: job.caseId,
+    trial: job.trial,
+    startedAt,
+    endedAt: Date.now(),
+    messages: observation.messages,
+    spans: observation.spans,
+    ...(observation.error === undefined ? {} : { error: observation.error }),
+  };
+}
+
 /** 사례 × trial을 제한된 동시성으로 실행한다. 반환 순서는 완료 시각과 무관하게 데이터셋 순서다. */
 export async function runDataset<I>(options: {
   dataset: EvalDataset<I, unknown>;
@@ -54,20 +85,12 @@ export async function runDataset<I>(options: {
   trials?: number;
   concurrency?: number;
 }): Promise<RunRecord[]> {
-  const trials = options.trials ?? 1;
-  const concurrency = options.concurrency ?? 1;
+  const { dataset, target, trials = 1, concurrency = 1 } = options;
 
-  positiveInteger(trials, "trials");
-  positiveInteger(concurrency, "concurrency");
+  assertPositiveInteger(trials, "trials");
+  assertPositiveInteger(concurrency, "concurrency");
 
-  const jobs: Job<I>[] = [];
-
-  for (const item of options.dataset.cases) {
-    for (let trial = 0; trial < trials; trial++) {
-      jobs.push({ index: jobs.length, caseId: item.id, input: item.input, trial });
-    }
-  }
-
+  const jobs = jobsFor(dataset, trials);
   const records = new Array<RunRecord>(jobs.length);
   let cursor = 0;
 
@@ -75,22 +98,7 @@ export async function runDataset<I>(options: {
     while (cursor < jobs.length) {
       const job = jobs[cursor++];
       if (job === undefined) return;
-      const startedAt = Date.now();
-      let observation: RunObservation;
-      try {
-        observation = await options.target(job.input, { caseId: job.caseId });
-      } catch (error) {
-        observation = { messages: [], spans: [], error: describeError(error) };
-      }
-      records[job.index] = {
-        caseId: job.caseId,
-        trial: job.trial,
-        startedAt,
-        endedAt: Date.now(),
-        messages: observation.messages,
-        spans: observation.spans,
-        ...(observation.error === undefined ? {} : { error: observation.error }),
-      };
+      records[job.index] = await runJob(job, target);
     }
   }
 

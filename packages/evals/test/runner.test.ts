@@ -87,7 +87,7 @@ test("report는 점수를 지어내지 않고 실행 완결성만 집계한다",
       return { messages: [], spans: [] };
     },
   });
-  const report = buildReport(dataset.cases.length, records);
+  const report = buildReport({ caseCount: dataset.cases.length, records });
   expect(report).toMatchObject({
     caseCount: 2,
     trialCount: 2,
