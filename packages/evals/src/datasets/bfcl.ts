@@ -1,29 +1,17 @@
-import { defineDataset, type EvalDataset } from "../dataset";
-
-export interface BfclTool {
-  name: string;
-  description: string;
-  parameters: {
-    type: "object";
-    properties?: Record<string, unknown>;
-    required?: string[];
-    [key: string]: unknown;
-  };
-}
+import { defineDataset } from "../dataset";
 
 export interface BfclInput {
   messages: Array<{ role: "user"; content: string }>;
-  tools: BfclTool[];
-}
-
-/** 값 배열은 BFCL이 허용하는 복수 정답이다. */
-export interface BfclExpectedCall {
-  name: string;
-  arguments: Record<string, unknown[]>;
-}
-
-export interface BfclExpected {
-  calls: BfclExpectedCall[];
+  tools: Array<{
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties?: Record<string, unknown>;
+      required?: string[];
+      [key: string]: unknown;
+    };
+  }>;
 }
 
 function fn(
@@ -31,7 +19,7 @@ function fn(
   description: string,
   properties: Record<string, unknown>,
   required: string[],
-): BfclTool {
+): BfclInput["tools"][number] {
   return { name, description, parameters: { type: "object", properties, required } };
 }
 
@@ -43,7 +31,7 @@ function fn(
  * 변경: BFCL의 `dict`/대문자 타입 표기를 JSON Schema 표기로 정규화하고 대화 중 첫 user 턴만 폈다.
  * 라이선스와 출처: ../../datasets/BFCL-NOTICE.md
  */
-export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset({
+export const BFCL_V4_MINI = defineDataset<BfclInput, { calls: Array<{ name: string }> }>({
   name: "bfcl-v4-mini",
   version: "6ea5797",
   cases: [
@@ -70,14 +58,8 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
         ],
       },
       expected: {
-        calls: [
-          {
-            name: "validateUserInput",
-            arguments: { inputField: ["userInputField"], isComplete: [true] },
-          },
-        ],
+        calls: [{ name: "validateUserInput" }],
       },
-      tags: ["bfcl", "simple", "javascript"],
     },
     {
       id: "simple_javascript_1",
@@ -103,18 +85,8 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
         ],
       },
       expected: {
-        calls: [
-          {
-            name: "getActiveDataEntries",
-            arguments: {
-              listElement: ["listElement"],
-              attribute: ["data-active", ""],
-              value: [true, ""],
-            },
-          },
-        ],
+        calls: [{ name: "getActiveDataEntries" }],
       },
-      tags: ["bfcl", "simple", "javascript"],
     },
     {
       id: "simple_javascript_3",
@@ -140,14 +112,8 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
         ],
       },
       expected: {
-        calls: [
-          {
-            name: "submitAtCoordinate",
-            arguments: { action: ["submit"], formId: ["loginForm"], coordinates: [[60, 30]] },
-          },
-        ],
+        calls: [{ name: "submitAtCoordinate" }],
       },
-      tags: ["bfcl", "simple", "javascript"],
     },
     {
       id: "simple_javascript_4",
@@ -169,14 +135,8 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
         ],
       },
       expected: {
-        calls: [
-          {
-            name: "emailFormatValidator",
-            arguments: { email: ["example@domain.com"], domain: ["domain.com"] },
-          },
-        ],
+        calls: [{ name: "emailFormatValidator" }],
       },
-      tags: ["bfcl", "simple", "javascript"],
     },
     {
       id: "simple_javascript_6",
@@ -198,9 +158,8 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
         ],
       },
       expected: {
-        calls: [{ name: "mapTransitions", arguments: { category: ["transition"], limit: [4] } }],
+        calls: [{ name: "mapTransitions" }],
       },
-      tags: ["bfcl", "simple", "javascript"],
     },
     {
       id: "simple_javascript_7",
@@ -222,14 +181,8 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
         ],
       },
       expected: {
-        calls: [
-          {
-            name: "getNextKeyValues",
-            arguments: { ctx: ["dataAnalysisContext"], currentKey: ["userId"] },
-          },
-        ],
+        calls: [{ name: "getNextKeyValues" }],
       },
-      tags: ["bfcl", "simple", "javascript"],
     },
     ...[
       {
@@ -300,7 +253,6 @@ export const BFCL_V4_MINI: EvalDataset<BfclInput, BfclExpected> = defineDataset(
       id,
       input: { messages: [{ role: "user" as const, content: question }], tools: [tool] },
       expected: { calls: [] },
-      tags: ["bfcl", "irrelevance"],
     })),
   ],
 });

@@ -41,7 +41,6 @@ export interface EvalSuiteCase {
   prompt: string;
   tools: string[];
   expectedTools: string[];
-  tags: string[];
 }
 
 export interface EvalSuite {
@@ -62,8 +61,6 @@ export interface EvalRecord {
 }
 
 export interface EvalReport {
-  dataset: string;
-  version: string;
   caseCount: number;
   trialCount: number;
   completed: number;

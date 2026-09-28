@@ -5,8 +5,8 @@ const dataset = defineDataset({
   name: "tiny",
   version: "1",
   cases: [
-    { id: "a", input: 1, expected: 2, tags: ["ok"] },
-    { id: "b", input: 2, expected: 4, tags: ["throws"] },
+    { id: "a", input: 1, expected: 2 },
+    { id: "b", input: 2, expected: 4 },
   ],
 });
 
@@ -38,7 +38,7 @@ describe("runDataset", () => {
         peak = Math.max(peak, active.length);
         await Bun.sleep(input === 1 ? 2 : 0);
         active.splice(active.indexOf(input), 1);
-        return { steps: [], messages: [{ role: "ai", content: String(input * 2) }], spans: [] };
+        return { messages: [{ role: "ai", content: String(input * 2) }], spans: [] };
       },
     });
 
@@ -59,7 +59,7 @@ describe("runDataset", () => {
       dataset,
       target: async (input) => {
         if (input === 2) throw new Error("boom");
-        return { steps: [], messages: [], spans: [] };
+        return { messages: [], spans: [] };
       },
     });
 
@@ -73,7 +73,7 @@ describe("runDataset", () => {
       runDataset({
         dataset,
         trials: 0,
-        target: async () => ({ steps: [], messages: [], spans: [] }),
+        target: async () => ({ messages: [], spans: [] }),
       }),
     ).rejects.toThrow("trials");
   });
@@ -84,13 +84,11 @@ test("report는 점수를 지어내지 않고 실행 완결성만 집계한다",
     dataset,
     target: async (input) => {
       if (input === 2) throw new Error("boom");
-      return { steps: [], messages: [], spans: [] };
+      return { messages: [], spans: [] };
     },
   });
-  const report = buildReport(dataset, records);
+  const report = buildReport(dataset.cases.length, records);
   expect(report).toMatchObject({
-    dataset: "tiny",
-    version: "1",
     caseCount: 2,
     trialCount: 2,
     completed: 1,

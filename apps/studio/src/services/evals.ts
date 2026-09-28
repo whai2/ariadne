@@ -1,10 +1,9 @@
 import { askAlways, createAgent } from "@ariadne/agent";
-import { type BaseMessage, human, type MessagesState, type StepUpdate } from "@ariadne/core";
+import { type BaseMessage, human } from "@ariadne/core";
 import {
   BFCL_V4_MINI,
   type BfclInput,
   buildReport,
-  type EvalFailure,
   type EvalTarget,
   runDataset,
 } from "@ariadne/evals";
@@ -17,12 +16,12 @@ import type { EvalService } from "./types";
 const MODEL = "claude-code/sonnet";
 
 export interface EvalServiceOptions {
-  target?: EvalTarget<BfclInput, MessagesState>;
+  target?: EvalTarget<BfclInput>;
   trials?: number;
   concurrency?: number;
 }
 
-function describeError(error: unknown): EvalFailure {
+function describeError(error: unknown): { name: string; message: string } {
   return error instanceof Error
     ? { name: error.name, message: error.message }
     : { name: "Error", message: String(error) };
@@ -42,11 +41,10 @@ function toolsFor(input: BfclInput): AnyTool[] {
 }
 
 /** Studio가 이미 사용하는 createAgent + trace 경로를 BFCL 입력 함수로 좁힌다. */
-export function claudeCodeBfclTarget(): EvalTarget<BfclInput, MessagesState> {
+export function claudeCodeBfclTarget(): EvalTarget<BfclInput> {
   const chat = model(MODEL, { promptedTools: true });
   return async (input, context) => {
     const collector = new TraceCollector();
-    const steps: StepUpdate<MessagesState>[] = [];
     let messages: BaseMessage[] = input.messages.map((message) => human(message.content));
     try {
       const graph = tracedGraph(
@@ -63,13 +61,12 @@ export function claudeCodeBfclTarget(): EvalTarget<BfclInput, MessagesState> {
       const stream = graph.stream({ messages });
       let next = await stream.next();
       while (!next.done) {
-        steps.push(next.value);
         next = await stream.next();
       }
       messages = next.value.messages;
-      return { steps, messages, spans: collector.spans() };
+      return { messages, spans: collector.spans() };
     } catch (error) {
-      return { steps, messages, spans: collector.spans(), error: describeError(error) };
+      return { messages, spans: collector.spans(), error: describeError(error) };
     }
   };
 }
@@ -86,7 +83,6 @@ export function createEvalService(options: EvalServiceOptions = {}): EvalService
         prompt: item.input.messages.map((message) => message.content).join("\n"),
         tools: item.input.tools.map((tool) => tool.name),
         expectedTools: item.expected?.calls.map((call) => call.name) ?? [],
-        tags: item.tags ?? [],
       })),
     }),
     async run() {
@@ -96,7 +92,7 @@ export function createEvalService(options: EvalServiceOptions = {}): EvalService
         trials: options.trials ?? 1,
         concurrency: options.concurrency ?? 2,
       });
-      return buildReport(BFCL_V4_MINI, records);
+      return buildReport(BFCL_V4_MINI.cases.length, records);
     },
   };
 }

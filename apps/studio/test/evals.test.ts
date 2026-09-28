@@ -6,7 +6,6 @@ const studio = createStudio(undefined, {
   evals: {
     concurrency: 3,
     target: async (input, context) => ({
-      steps: [],
       messages: [
         ai(
           "",

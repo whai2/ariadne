@@ -3,8 +3,6 @@ export interface EvalCase<I = unknown, E = unknown> {
   id: string;
   input: I;
   expected?: E;
-  rubric?: string;
-  tags?: readonly string[];
 }
 
 /** 같은 이름과 버전 아래 순서가 고정된 평가 사례 묶음. */

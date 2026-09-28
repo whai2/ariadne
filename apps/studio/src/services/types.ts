@@ -1,11 +1,5 @@
-import type {
-  BaseMessage,
-  ChannelCheckpoint,
-  GraphView,
-  MessagesState,
-  ToolCall,
-} from "@ariadne/core";
-import type { BfclExpected, BfclInput, EvalReport } from "@ariadne/evals";
+import type { BaseMessage, ChannelCheckpoint, GraphView, ToolCall } from "@ariadne/core";
+import type { EvalReport } from "@ariadne/evals";
 import type { InjectionOutcome, MemoryStore, ScoredFact } from "@ariadne/memory";
 import type { TraceRecord } from "@ariadne/observability";
 
@@ -104,7 +98,6 @@ export interface EvalSuiteCaseView {
   prompt: string;
   tools: string[];
   expectedTools: string[];
-  tags: readonly string[];
 }
 
 export interface EvalSuiteView {
@@ -116,5 +109,5 @@ export interface EvalSuiteView {
 
 export interface EvalService {
   suite(): EvalSuiteView;
-  run(): Promise<EvalReport<BfclInput, BfclExpected, MessagesState>>;
+  run(): Promise<EvalReport>;
 }

@@ -1,6 +1,6 @@
-import type { BaseMessage, StepUpdate } from "@ariadne/core";
+import type { BaseMessage } from "@ariadne/core";
 import type { Span } from "@ariadne/observability";
-import type { EvalCase, EvalDataset } from "./dataset";
+import type { EvalDataset } from "./dataset";
 
 export interface EvalFailure {
   name: string;
@@ -8,46 +8,26 @@ export interface EvalFailure {
 }
 
 /** 평가 대상이 한 번 실행된 뒤 내놓는 관측값. 점수는 아직 없다. */
-export interface RunObservation<S extends object = object> {
-  steps: StepUpdate<S>[];
+export interface RunObservation {
   messages: BaseMessage[];
   spans: Span[];
   error?: EvalFailure;
 }
 
-export interface EvalTargetContext {
-  caseId: string;
-  trial: number;
-}
-
 /** model·agent를 모르는 주입점. 바깥 조립 코드가 실제 대상을 이 함수 모양으로 바꾼다. */
-export type EvalTarget<I, S extends object = object> = (
-  input: I,
-  context: EvalTargetContext,
-) => Promise<RunObservation<S>>;
+export type EvalTarget<I> = (input: I, context: { caseId: string }) => Promise<RunObservation>;
 
-export interface RunRecord<I = unknown, E = unknown, S extends object = object>
-  extends RunObservation<S> {
+export interface RunRecord extends RunObservation {
   caseId: string;
   trial: number;
-  input: I;
-  expected?: E;
-  tags: readonly string[];
   startedAt: number;
   endedAt: number;
 }
 
-export interface RunDatasetOptions<I, E, S extends object> {
-  dataset: EvalDataset<I, E>;
-  target: EvalTarget<I, S>;
-  trials?: number;
-  concurrency?: number;
-  now?: () => number;
-}
-
-interface Job<I, E> {
+interface Job<I> {
   index: number;
-  item: EvalCase<I, E>;
+  caseId: string;
+  input: I;
   trial: number;
 }
 
@@ -68,47 +48,45 @@ function describeError(error: unknown): EvalFailure {
 }
 
 /** 사례 × trial을 제한된 동시성으로 실행한다. 반환 순서는 완료 시각과 무관하게 데이터셋 순서다. */
-export async function runDataset<I, E, S extends object = object>(
-  options: RunDatasetOptions<I, E, S>,
-): Promise<RunRecord<I, E, S>[]> {
+export async function runDataset<I>(options: {
+  dataset: EvalDataset<I, unknown>;
+  target: EvalTarget<I>;
+  trials?: number;
+  concurrency?: number;
+}): Promise<RunRecord[]> {
   const trials = options.trials ?? 1;
   const concurrency = options.concurrency ?? 1;
+
   positiveInteger(trials, "trials");
   positiveInteger(concurrency, "concurrency");
-  const now = options.now ?? Date.now;
 
-  const jobs: Job<I, E>[] = [];
+  const jobs: Job<I>[] = [];
+
   for (const item of options.dataset.cases) {
     for (let trial = 0; trial < trials; trial++) {
-      jobs.push({ index: jobs.length, item, trial });
+      jobs.push({ index: jobs.length, caseId: item.id, input: item.input, trial });
     }
   }
-  const records = new Array<RunRecord<I, E, S>>(jobs.length);
+
+  const records = new Array<RunRecord>(jobs.length);
   let cursor = 0;
 
   async function worker(): Promise<void> {
     while (cursor < jobs.length) {
       const job = jobs[cursor++];
       if (job === undefined) return;
-      const startedAt = now();
-      let observation: RunObservation<S>;
+      const startedAt = Date.now();
+      let observation: RunObservation;
       try {
-        observation = await options.target(job.item.input, {
-          caseId: job.item.id,
-          trial: job.trial,
-        });
+        observation = await options.target(job.input, { caseId: job.caseId });
       } catch (error) {
-        observation = { steps: [], messages: [], spans: [], error: describeError(error) };
+        observation = { messages: [], spans: [], error: describeError(error) };
       }
       records[job.index] = {
-        caseId: job.item.id,
+        caseId: job.caseId,
         trial: job.trial,
-        input: job.item.input,
-        ...(job.item.expected === undefined ? {} : { expected: job.item.expected }),
-        tags: job.item.tags ?? [],
         startedAt,
-        endedAt: now(),
-        steps: observation.steps,
+        endedAt: Date.now(),
         messages: observation.messages,
         spans: observation.spans,
         ...(observation.error === undefined ? {} : { error: observation.error }),

@@ -23,11 +23,10 @@ F6까지 한 run의 model·tool·node·superstep을 trace로 남길 수 있었�
 패키지는 `agent`와 `model`을 import하지 않는다. 평가 대상은 다음 함수 하나다.
 
 ```ts
-type EvalTarget<I, S> = (
+type EvalTarget<I> = (
   input: I,
-  context: { caseId: string; trial: number },
+  context: { caseId: string },
 ) => Promise<{
-  steps: StepUpdate<S>[];
   messages: BaseMessage[];
   spans: Span[];
   error?: { name: string; message: string };
@@ -63,7 +62,7 @@ BFCL case
 → model("claude-code/sonnet", { promptedTools: true })
 → createAgent
 → tracedGraph
-→ messages + steps + spans
+→ messages + spans
 ```
 
 BFCL single-turn AST 과제는 **첫 tool call**이 산출물이다. 툴을 실제 실행하면 두 번째 모델 호출과
@@ -102,3 +101,21 @@ BFCL single-turn AST 과제는 **첫 tool call**이 산출물이다. 툴을 실�
 `bun run verify` 결과는 **441 pass · 3 skip · 0 fail**이다. Studio에서 실제
 `claude-code/sonnet`으로 12건을 실행한 결과도 **completed 12 · errors 0**이었고, 각 record에
 관측 tool call과 4~6개 span이 남았다.
+
+## 7. 현재 쓰는 것만 남긴다
+
+첫 구현 뒤 타입의 근거를 다시 추적하면서, 후속 단계를 위해 미리 실어 둔 필드를 제거했다.
+
+- `EvalCase`: 현재 BFCL 실행에 쓰는 `id` · `input` · `expected`만 남긴다.
+- BFCL의 `expected`도 현재 화면이 읽는 함수 이름만 보존한다. 아직 판정하지 않는 인자 정답을
+  미리 옮겨 두지 않는다.
+- `RunObservation`: 화면이 읽는 tool call의 원천인 `messages`, span 수인 `spans`, 실패인 `error`만
+  남긴다. 그래프 stream은 끝까지 소비하지만 `steps` 배열을 별도로 복제하지 않는다.
+- `RunRecord`: 현재 식별·반복·소요 시간 표시에 쓰는 `caseId` · `trial` · 시각과 관측값만 남긴다.
+  데이터셋에 이미 있는 `input`·`expected`를 다시 복사하지 않는다.
+- `EvalReport`: 화면이 표시하는 case·trial·완료·실패 수와 records만 남긴다. suite 응답과 겹치는
+  dataset·version, 아무도 읽지 않는 전체 시작·종료 시각은 제거한다.
+- BFCL 내부 구성 요소 타입은 별도 사용자가 없으므로 공개 export하지 않고 `BfclInput` 안에
+  직접 표현한다.
+
+제거한 필드가 필요해지는 단계가 실제로 오면, 그때 소비 코드와 테스트와 함께 다시 도입한다.
